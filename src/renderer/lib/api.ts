@@ -35,6 +35,7 @@ export const native: NativeBridge = window.mjournalNative ?? {
   pathForFile: () => '',
   onFlushRequest: noop,
   onNavigate: noop,
+  onUpdateStatus: noop,
 };
 
 export function errorMessage(err: unknown): string {

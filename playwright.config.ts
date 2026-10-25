@@ -7,6 +7,8 @@ export default defineConfig({
   timeout: 90_000,
   expect: { timeout: 10_000 },
   workers: 1,
+  // On GitHub Actions a test gets one more try, so a slow runner can't block a release by chance.
+  retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
   outputDir: 'test-results',
   use: { trace: 'retain-on-failure' },

@@ -1,7 +1,7 @@
 /**
  * The bridge between the sandboxed interface and the main process. It exposes
- * one function per API method (all listed in API_METHODS) plus three helpers,
- * and nothing else: no Node.js, no file system, no raw IPC.
+ * one function per API method (all listed in API_METHODS) plus the NativeBridge
+ * helpers, and nothing else: no Node.js, no file system, no raw IPC.
  */
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { API_METHODS, EVENTS, channelName } from '@core/api';
@@ -41,5 +41,12 @@ contextBridge.exposeInMainWorld('mjournalNative', {
     };
     ipcRenderer.on(EVENTS.navigate, listener);
     return () => ipcRenderer.removeListener(EVENTS.navigate, listener);
+  },
+  onUpdateStatus(callback: (status: unknown) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, status: unknown) => {
+      if (typeof status === 'object' && status !== null) callback(status);
+    };
+    ipcRenderer.on(EVENTS.updateStatus, listener);
+    return () => ipcRenderer.removeListener(EVENTS.updateStatus, listener);
   },
 });

@@ -26,10 +26,16 @@ export interface LaunchOptions {
   guide?: 'skip' | 'keep';
   /** Most tests run with reduced motion so timing never depends on animations. */
   motion?: 'reduce' | 'no-preference';
+  /** Extra environment variables, e.g. MJOURNAL_UPDATE_URL. */
+  env?: Record<string, string>;
 }
 
 export async function launch(dataDir = makeDataDir(), options: LaunchOptions = {}): Promise<Launched> {
-  const env: Record<string, string> = { ...(process.env as Record<string, string>), MJOURNAL_DATA_DIR: dataDir };
+  const env: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+    ...options.env,
+    MJOURNAL_DATA_DIR: dataDir,
+  };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({ args: ['.'], cwd: ROOT, env });
   const page = await app.firstWindow();

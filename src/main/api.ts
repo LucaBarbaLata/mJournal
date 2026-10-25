@@ -5,6 +5,7 @@
  */
 import { basename } from 'node:path';
 import type { MJournalApi, SearchQuery, Settings } from '@core/api';
+import type { UpdateStatus } from '@core/updates';
 import { addDays, todayKey, type DateKey } from '@core/dates';
 import { isMoodColor, isMoodIcon, MAX_MOOD_LABEL_LENGTH, type MoodColor, type MoodIcon } from '@core/moods';
 import { MAX_PROMPT_LENGTH, MONTHLY_KEYS } from '@core/prompts';
@@ -42,6 +43,9 @@ export interface Platform {
   showItemInFolder(path: string): void;
   openFolder(path: string): Promise<void>;
   settingsChanged(settings: Settings): void;
+  /** The update check (services/updates.ts). */
+  updates: { status(): UpdateStatus; check(): Promise<UpdateStatus> };
+  openReleasePage(): Promise<void>;
 }
 
 /** Same shape as MJournalApi, but every handler takes unvalidated arguments. */
@@ -342,6 +346,12 @@ export function createApi(host: JournalHost, platform: Platform): ApiHandlers {
         const target = expectText(path, 'file path', 4096);
         if (savedFiles.has(target) && existsSync(target)) platform.showItemInFolder(target);
       },
+    },
+
+    updates: {
+      status: async () => platform.updates.status(),
+      check: async () => platform.updates.check(),
+      openReleasePage: async () => platform.openReleasePage(),
     },
   };
 }

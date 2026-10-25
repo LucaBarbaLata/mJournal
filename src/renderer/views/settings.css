@@ -472,3 +472,22 @@
   color: var(--accent-text);
   margin: 2px 0 4px;
 }
+.about-license {
+  margin-top: 6px;
+  font-size: var(--text-xs);
+}
+
+/* ---------- Updates ---------- */
+.update-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+}
+.update-status {
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}

@@ -30,6 +30,8 @@ const VALIDATORS: Validators = {
   onboardingDone: isBoolean,
   dismissedTips: (v): v is string[] =>
     Array.isArray(v) && v.length <= 50 && v.every((id) => typeof id === 'string' && /^[a-z0-9-]{1,40}$/.test(id)),
+  checkForUpdates: isBoolean,
+  dismissedUpdate: (v): v is string => typeof v === 'string' && (v === '' || /^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(v)),
 };
 
 export function defaultSettings(regionCode: string): Settings {
@@ -47,6 +49,8 @@ export function defaultSettings(regionCode: string): Settings {
     reminderTime: '20:30',
     onboardingDone: false,
     dismissedTips: [],
+    checkForUpdates: true,
+    dismissedUpdate: '',
   };
 }
 

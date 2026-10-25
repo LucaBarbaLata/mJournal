@@ -51,20 +51,37 @@ never sends your writing or photos anywhere.
 
 ## Install and open
 
-### Build it with one double-click
+### Download
+
+Get the newest version from the **[Releases page](https://github.com/LucaBarbaLata/mJournal/releases/latest)**:
+
+- **`mJournal-Setup-<version>.exe`** — installs mJournal for your Windows user (no administrator rights needed) with a
+  Start menu entry and a desktop shortcut. *Recommended for everyday use.*
+- **`mJournal-<version>-portable.exe`** — runs without installing. It starts a little more slowly because it unpacks
+  itself each time.
+
+Then open mJournal from its desktop shortcut or the Start menu (or double-click the portable `.exe`).
+`SHA256SUMS.txt` on the same page lets you check a download: `Get-FileHash .\mJournal-Setup-<version>.exe` in
+PowerShell should print the same value.
+
+> **“Windows protected your PC”** — Windows shows this for apps that aren’t code-signed. Choose **More info →
+> Run anyway**. mJournal isn’t signed because signing certificates cost money every year, which doesn’t fit a free
+> hobby project. Every release is built from this source code by GitHub Actions
+> ([.github/workflows/release.yml](.github/workflows/release.yml)), so you can see exactly what went into it.
+
+### Build it yourself with one double-click
 
 1. Double-click **`Build mJournal.cmd`** in this folder.
    The first build downloads about 300 MB of tools and takes a few minutes. If Node.js isn’t installed, a private copy
    is downloaded into `.tools\` (checked against its official checksum) — nothing is installed system-wide.
-2. When it finishes, the `release` folder opens. It contains:
-   - **`mJournal-Setup-1.0.0.exe`** — installs mJournal for your Windows user (no administrator rights needed) with a
-     Start menu entry and a desktop shortcut. *Recommended for everyday use.*
-   - **`mJournal-1.0.0-portable.exe`** — runs without installing. It starts a little more slowly because it unpacks
-     itself each time.
-3. Open mJournal from its desktop shortcut or the Start menu (or double-click the portable `.exe`).
+2. When it finishes, the `release` folder opens with the same two files as on the Releases page.
 
-> **“Windows protected your PC”** — Windows shows this for apps that aren’t code-signed. Choose **More info →
-> Run anyway**. mJournal isn’t signed because signing certificates are paid; you built it yourself from this source.
+### Updating
+
+About once a day mJournal asks GitHub whether a newer version is out, and if so a small note appears in the sidebar.
+It never downloads or installs anything by itself: *Get it* opens the Releases page in your browser. Download the new
+installer and run it — it replaces the app and **keeps your journal**. (For the portable version, replace the old
+`.exe`.) You can turn the check off, or check right away, in **Settings → Updates**.
 
 ### For developers
 
@@ -120,8 +137,12 @@ All of these live in **Settings → Backup & export**.
 
 ## Privacy
 
-- **Local only.** No account, no cloud sync, no analytics, telemetry or ads. mJournal loads nothing from the web and
-  sends nothing anywhere; its fonts and icons are bundled. Search, statistics and backups all run on your computer.
+- **Local only.** No account, no cloud sync, no analytics, telemetry or ads. Your writing, moods and photos never
+  leave your computer; fonts and icons are bundled, and search, statistics and backups all run locally.
+- **One question to the internet.** The only request mJournal makes is the update check: about once a day it asks
+  GitHub (`api.github.com`) which version was released last. Like any web request it reveals your IP address to
+  GitHub, but it carries nothing about you or your journal — no cookies, no ids, just “mJournal”. Turn it off in
+  **Settings → Updates** and mJournal never goes online at all.
 - **Not encrypted at rest.** Your journal is stored as ordinary files in your Windows user profile. Anyone who can
   sign in to your account — or read your disk — can read them. Protect it with a password on your Windows account and
   turn on device encryption (*BitLocker* or *Device encryption* in Windows settings). Backups and exports aren’t
@@ -149,7 +170,8 @@ All of these live in **Settings → Backup & export**.
 | --- | --- |
 | “Windows protected your PC” | Choose **More info → Run anyway** (the app isn’t code-signed). |
 | mJournal says it couldn’t open your journal | Nothing has been deleted. *Open data folder* to look around, or *Set it aside and start a new journal*: the database is moved to `backups\damaged-journal-…`, and you can then restore a complete backup from Settings. |
-| “This journal was saved by a newer version of mJournal” | Your data is untouched. Build or install the newer version. |
+| “This journal was saved by a newer version of mJournal” | Your data is untouched. Install the newer version from the [Releases page](https://github.com/LucaBarbaLata/mJournal/releases/latest). |
+| Settings → Updates says GitHub couldn’t be reached | You’re offline, or a firewall blocks `api.github.com`. Nothing else is affected; mJournal tries again a few hours later. |
 | A photo shows “Photo unavailable” | Its file is missing from `photos\` (Settings → Data & privacy counts these). Restoring a complete backup brings it back. |
 | iPhone photos (HEIC) are rejected | Save them as JPEG first — on the iPhone: *Settings → Camera → Formats → Most Compatible*; or open them in the Windows Photos app and *Save as* JPEG. |
 | The evening reminder doesn’t appear | It only works while mJournal is open (minimized is fine), stays quiet on days you’ve already written, and can be hidden by Windows *Do not disturb*. It works best with the installed version. |
@@ -170,7 +192,22 @@ fetch one.
 | `npm run typecheck` | Type-checks the main process, interface and tests |
 | `npm run dist` | Builds the installer and the portable `.exe` into `release\` |
 | `npm run icons` | Re-renders `build\icon.ico` and the PNG icons from `build\icon.svg` |
+| `npm run notices` | Rewrites `THIRD-PARTY-NOTICES.txt` after dependencies change (a unit test reminds you) |
 | `npm run verify` | Type-check, unit tests and end-to-end tests in one go |
+
+### Releasing a version
+
+```powershell
+npm version patch        # or minor / major: updates package.json, commits and tags v1.0.1
+git push --follow-tags
+```
+
+Pushing the tag starts [.github/workflows/release.yml](.github/workflows/release.yml) on GitHub Actions. It type-checks
+and tests everything, builds the installer and the portable app on Windows, and publishes them with a `SHA256SUMS.txt`
+as a GitHub release, where the app’s update check finds them. Edit the release notes on GitHub afterwards if you like.
+To try the build without releasing, run the workflow by hand (*Actions → Release → Run workflow*); the files are
+attached to that run. The repository has to be public for people to download releases and for the update check to
+see them.
 
 ### Stack
 
@@ -198,14 +235,15 @@ src/
   core/        Pure, tested logic shared by both sides: dates, moods, prompts, streaks, search, validation, API contract
   main/        Electron main process
     store/     SQLite access: migrations, entries, prompts, moods, photos, reflections, search, stats, settings
-    services/  Photo files, backups, restore, snapshots, exports
+    services/  Photo files, backups, restore, snapshots, exports, the update check
     api.ts     Validates every call from the interface      host.ts  Owns the journal (and restores)
     index.ts   App start-up, data folder, window             protocols.ts  app:// and mj-media://
   preload/     The narrow bridge exposed to the interface
   renderer/    React interface: views/, components/, lib/, styles/ (design tokens in styles/tokens.css)
 tests/unit/    Vitest tests          tests/e2e/   Playwright tests of the real app
 build/         Icon sources and packaging resources
-scripts/       Icon rendering and the Node.js download used by Build mJournal.cmd
+scripts/       Icon rendering, third-party notices and the Node.js download used by Build mJournal.cmd
+.github/       The release workflow
 ```
 
 ## Known limitations
@@ -217,9 +255,11 @@ scripts/       Icon rendering and the Node.js download used by Build mJournal.cm
 - The evening reminder needs mJournal to be running.
 - Built and tested on Windows 11 only. macOS and Linux packaging is configured but hasn’t been tested.
 - The app isn’t code-signed, so Windows shows a SmartScreen warning the first time.
+- Updates are installed by hand: mJournal tells you about a new version but doesn’t download it.
 - The interface is in English.
 
 ## License
 
-No license has been chosen yet (`"license": "UNLICENSED"` in `package.json`), so all rights are reserved by the author
-until one is added.
+mJournal is free and open source under the [MIT License](LICENSE). It includes React and the Fraunces, Nunito and
+Caveat fonts (SIL Open Font License), among others; their licenses are collected in
+[THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which also ships next to `mJournal.exe`.

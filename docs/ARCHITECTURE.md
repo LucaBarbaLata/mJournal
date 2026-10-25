@@ -146,8 +146,32 @@ SQLite runs in WAL mode with `synchronous = FULL`, so a committed save survives 
 - Navigation, `window.open`, `<webview>` and all permission requests are blocked.
 - Packaged app: Electron fuses disable `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and inspector flags, and enforce asar
   integrity and loading only from the asar.
-- Logs never contain journal content. There is no telemetry and no network access in the app’s code.
+- Logs never contain journal content. There is no telemetry. The only network request is the update check (below);
+  the interface itself can’t reach the network at all (its content-security policy allows no remote origins).
 - Not done: encryption at rest. Protecting the journal relies on the operating system account and disk encryption.
+
+### The update check
+
+`main/services/updates.ts` (`UpdateChecker`) decides *when*: about 10 seconds after start and then once a day, never
+more than daily across restarts (the last answer is kept in the `internal.updateCheck` setting), a few hours after a
+failure, and never while *Check for new versions* is off. *Check now* asks right away. `main/index.ts` makes the
+request: a plain `GET` of GitHub’s latest-release API from the main process, in its own in-memory session (no cookies,
+no cache), with the user agent `mJournal`. `core/updates.ts` compares the version numbers. The app never downloads
+anything; *Get it* opens the fixed releases-page address with `shell.openExternal`, never an address taken from the
+answer. Development builds don’t check automatically; end-to-end tests point `MJOURNAL_UPDATE_URL` at a local server
+(only honoured when the app isn’t packaged).
+
+## Releases
+
+`.github/workflows/release.yml` runs on GitHub Actions when a `vX.Y.Z` tag is pushed (`npm version patch` then
+`git push --follow-tags`). On a Windows runner it checks that the tag matches `package.json`, runs `npm ci` and
+`npm run verify`, builds with `npm run dist`, writes `SHA256SUMS.txt` and publishes the installer, the portable app
+and the checksums with `gh release create`. electron-builder itself never publishes (`publish: null`), so no
+auto-update metadata is produced. Running the workflow by hand builds and tests without releasing and keeps the files
+as a run artifact.
+
+`THIRD-PARTY-NOTICES.txt` is generated from `node_modules` by `scripts/notices.cjs` (`npm run notices`) and shipped next
+to the executable together with `LICENSE`; `tests/unit/notices.test.ts` fails when it is out of date.
 
 ## Testing
 
@@ -156,12 +180,15 @@ SQLite runs in WAL mode with `synchronous = FULL`, so a committed save survives 
   photos (types, size limit, duplicate names, dedupe, missing files, removal, thumbnails); search and filters; stats;
   JSON and CSV export (including formula escaping); migrations (upgrade, rollback, newer version, unreadable file);
   backup and restore (round trip, cancel, corrupted, truncated, path traversal, absolute paths, links, unexpected
-  files, tampered manifest, database or photos); API validation.
+  files, tampered manifest, database or photos); API validation; version comparison and update-check scheduling (with
+  fake timers); third-party notices being up to date.
 - `tests/e2e` (Playwright driving the built app with a temporary `MJOURNAL_DATA_DIR`): clean start; writing, closing
   the window and reopening; editing earlier days; calendar navigation; photos with duplicate names and thumbnails;
   missing photo files; search and filters; monthly reflection persistence; JSON and CSV export; backup and confirmed
   restore; corrupted backup; theme switching; the welcome guide (with animations on, and in the smallest window);
-  one-time tips; keyboard-only use. Native dialogs are stubbed in the main process. The other tests run with reduced motion and skip the guide.
+  one-time tips; the update note (against a local stand-in for GitHub); keyboard-only use. Native dialogs and
+  `shell.openExternal` are stubbed in the main process. The other tests run with reduced motion and skip the guide.
+  On GitHub Actions each end-to-end test gets one retry.
 
 ## How-tos
 

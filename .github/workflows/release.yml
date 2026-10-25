@@ -1,0 +1,99 @@
+# Builds mJournal on Windows, tests it and publishes it as a GitHub release.
+#
+# To release a new version:
+#   npm version patch        (or minor / major: updates package.json, commits and tags vX.Y.Z)
+#   git push --follow-tags
+#
+# Running it by hand (Actions → Release → Run workflow) builds and tests without
+# releasing; the installers are attached to that run for 14 days.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    # Generous: packing the portable app can stall while a virus scanner reads it.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Read the version
+        id: version
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+          IS_TAG: ${{ github.ref_type == 'tag' }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:IS_TAG -eq 'true' -and $env:TAG -ne "v$version") {
+            throw "The tag $env:TAG doesn't match the version in package.json ($version)."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - run: npm ci
+
+      # The electron package has no install script; this fetches its runtime for the tests.
+      - name: Download the Electron runtime
+        run: node node_modules/electron/install.js
+
+      - name: Type-check and test (unit and end-to-end)
+        run: npm run verify
+
+      - name: Build the installer and the portable app
+        run: npm run dist
+
+      - name: Write checksums
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          Get-FileHash "release/mJournal-Setup-$env:VERSION.exe", "release/mJournal-$env:VERSION-portable.exe" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content release/SHA256SUMS.txt -Encoding ascii
+          Get-Content release/SHA256SUMS.txt
+
+      - name: Keep the build (manual runs)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v7
+        with:
+          name: mJournal-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: |
+            release/mJournal-Setup-${{ steps.version.outputs.version }}.exe
+            release/mJournal-${{ steps.version.outputs.version }}-portable.exe
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create $env:TAG `
+            "release/mJournal-Setup-$env:VERSION.exe" `
+            "release/mJournal-$env:VERSION-portable.exe" `
+            release/SHA256SUMS.txt `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "mJournal $env:VERSION" `
+            --generate-notes

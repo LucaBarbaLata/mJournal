@@ -269,6 +269,17 @@ describe('settings', () => {
     expect(journal.settings.get()).toMatchObject({ onboardingDone: true, dismissedTips: ['calendar', 'journal'] });
   });
 
+  it('checks for new versions by default and remembers a put-away update note', () => {
+    let journal = openJournal();
+    expect(journal.settings.get()).toMatchObject({ checkForUpdates: true, dismissedUpdate: '' });
+    journal.settings.update({ checkForUpdates: false, dismissedUpdate: '1.2.3' });
+    expect(() => journal.settings.update({ dismissedUpdate: 'v1.2.3' })).toThrow();
+    expect(() => journal.settings.update({ dismissedUpdate: '1.2' })).toThrow();
+    expect(() => journal.settings.update({ checkForUpdates: 'no' })).toThrow();
+    journal = reopen(journal);
+    expect(journal.settings.get()).toMatchObject({ checkForUpdates: false, dismissedUpdate: '1.2.3' });
+  });
+
   it('falls back to defaults when a stored value is malformed', () => {
     const journal = openJournal();
     journal.db.run("INSERT INTO settings (key, value, updated_at) VALUES ('theme', '{oops', 'x')");

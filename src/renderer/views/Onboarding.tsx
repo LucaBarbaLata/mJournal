@@ -291,7 +291,11 @@ export function Onboarding() {
       body: (
         <Points
           items={[
-            { icon: 'lock', title: 'Stays on this computer.', text: 'No account, no cloud, no tracking.' },
+            {
+              icon: 'lock',
+              title: 'Stays on this computer.',
+              text: 'No account, no cloud, no tracking. mJournal only goes online to check for a new version.',
+            },
             { icon: 'info', title: 'Not encrypted by mJournal.', text: 'A password on your computer account keeps your journal safe.' },
             { icon: 'download', title: 'Back up now and then', text: 'in Settings → Backup & export, to a USB drive or another disk.' },
           ]}

@@ -3,6 +3,7 @@ import { ConfirmHost } from './components/Dialog';
 import { Icon, type IconName } from './components/Icon';
 import { LogoMark, Wordmark } from './components/Logo';
 import { ToastHost } from './components/Toasts';
+import { UpdateNotice } from './components/UpdateNotice';
 import { native } from './lib/api';
 import { AppProvider, useApp } from './lib/app';
 import { href, navigate, useRoute, type RouteName } from './lib/router';
@@ -54,6 +55,9 @@ function useNavPill(navRef: RefObject<HTMLElement | null>, current: string) {
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(nav);
+    // The Settings link moves when something appears in the sidebar's foot, like the update note.
+    const foot = nav.querySelector('.sidebar-foot');
+    if (foot) observer.observe(foot);
     return () => observer.disconnect();
   }, [navRef, current]);
 
@@ -100,6 +104,7 @@ function Sidebar({ active }: { active: RouteName }) {
         ))}
       </ul>
       <div className="sidebar-foot">
+        <UpdateNotice />
         <a
           href={href.settings()}
           className="nav-item"

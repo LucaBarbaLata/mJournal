@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { EVENTS } from '@core/api';
 import { todayKey } from '@core/dates';
+import { LATEST_RELEASE_API } from '@core/updates';
 import { UserFacingError } from '@core/validation';
 import icon from '../../resources/icon.png?asset';
 import { createApi } from './api';
@@ -25,6 +26,7 @@ import { APP_ORIGIN, handleAppProtocol, handleMediaProtocol, registerSchemes } f
 import { Reminder } from './reminders';
 import { fileStamp } from './services/fsutil';
 import { maybeTakeDailySnapshot } from './services/snapshots';
+import { UpdateChecker } from './services/updates';
 import { createMainWindow, type WindowState } from './window';
 
 registerSchemes();
@@ -60,6 +62,23 @@ const isTrustedUrl = (url: string) =>
 let host: JournalHost | null = null;
 let mainWindow: BrowserWindow | null = null;
 let reminder: Reminder | null = null;
+let updates: UpdateChecker | null = null;
+
+// End-to-end tests point the update check at a local server instead of GitHub.
+const testUpdateFeed = app.isPackaged ? undefined : process.env.MJOURNAL_UPDATE_URL;
+
+/** The only request mJournal sends to the internet (see services/updates.ts). */
+async function fetchLatestRelease(): Promise<unknown> {
+  // Its own in-memory session: no cookies, no cache, nothing shared with the window.
+  const ses = session.fromPartition('mjournal-update-check', { cache: false });
+  const response = await ses.fetch(testUpdateFeed ?? LATEST_RELEASE_API, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'mJournal' },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (response.status === 404) return null; // Nothing has been released yet.
+  if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
+  return response.json();
+}
 
 if (process.platform === 'win32') app.setAppUserModelId('app.mjournal');
 
@@ -171,12 +190,27 @@ async function start(): Promise<void> {
     },
   );
 
+  updates = new UpdateChecker({
+    currentVersion: app.getVersion(),
+    fetchLatestRelease,
+    enabled: () => journalHost.journal.settings.get().checkForUpdates,
+    load: () => journalHost.journal.settings.getInternal('updateCheck'),
+    save: (check) => journalHost.journal.settings.setInternal('updateCheck', check),
+    onChange: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(EVENTS.updateStatus, status);
+    },
+    onError: (err) => log.warn('Could not check for a new version', err),
+  });
+  const updateChecker = updates;
+
   const platform = electronPlatform(
     () => mainWindow,
     (settings) => {
       applyTheme(settings.theme);
       reminder?.update(settings);
+      updateChecker.settingsChanged();
     },
+    updateChecker,
   );
   registerIpc(createApi(journalHost, platform), isTrustedUrl);
 
@@ -202,6 +236,9 @@ async function start(): Promise<void> {
     mainWindow = null;
   });
 
+  // Automatic checks only in the released app (and in tests that bring their own feed).
+  if (app.isPackaged || testUpdateFeed) updateChecker.start(testUpdateFeed ? 300 : 10_000);
+
   // The daily safety snapshot runs after the window is up so startup stays quick.
   setTimeout(() => {
     try {
@@ -215,6 +252,7 @@ async function start(): Promise<void> {
 
 app.on('window-all-closed', () => {
   reminder?.dispose();
+  updates?.stop();
   const closing = host?.close() ?? Promise.resolve();
   host = null;
   closing

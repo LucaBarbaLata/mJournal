@@ -3,8 +3,13 @@
   "productName": "mJournal",
   "version": "1.0.0",
   "description": "mJournal is a private, local-first journal for gratitude, reflection, moods and everyday memories.",
-  "author": "mJournal",
-  "license": "UNLICENSED",
+  "author": "lucariki",
+  "license": "MIT",
+  "homepage": "https://github.com/LucaBarbaLata/mJournal",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LucaBarbaLata/mJournal.git"
+  },
   "private": true,
   "main": "out/main/index.js",
   "engines": {
@@ -19,6 +24,7 @@
     "test:watch": "vitest",
     "test:e2e": "electron-vite build && playwright test",
     "icons": "electron scripts/render-icons.cjs",
+    "notices": "node scripts/notices.cjs",
     "dist": "electron-vite build && electron-builder --win --publish never",
     "verify": "npm run typecheck && npm run test && npm run test:e2e"
   },
@@ -37,7 +43,7 @@
     "@types/yauzl": "3.4.0",
     "@types/yazl": "3.3.1",
     "@vitejs/plugin-react": "5.2.0",
-    "electron": "44.7.0",
+    "electron": "44.9.3",
     "electron-builder": "26.17.0",
     "electron-vite": "5.0.0",
     "react": "19.3.0",

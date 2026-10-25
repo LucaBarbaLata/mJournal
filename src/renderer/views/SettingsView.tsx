@@ -1,14 +1,17 @@
 /** Settings: personal touches, appearance, moods, prompts, backups and privacy. */
 import { useEffect, useState, type ReactNode } from 'react';
 import type { Settings, ThemePreference, WritingFont } from '@core/api';
-import { formatLongDate, type DateFormatPreference } from '@core/dates';
+import { formatLongDate, todayKey, type DateFormatPreference } from '@core/dates';
+import type { UpdateStatus } from '@core/updates';
 import { Icon, type IconName } from '../components/Icon';
 import { LogoMark, Wordmark } from '../components/Logo';
-import { errorMessage } from '../lib/api';
-import { useApp } from '../lib/app';
+import { openReleasePage } from '../components/UpdateNotice';
+import { api, errorMessage } from '../lib/api';
+import { useApp, type AppState } from '../lib/app';
 import { withThemeFade } from '../lib/motion';
 import { scrollMainTo } from '../lib/scroll';
 import { useToday } from '../lib/time';
+import { useUpdateStatus } from '../lib/updates';
 import { BackupSettings } from './settings/BackupSettings';
 import { DataSettings, RemovedPhotos } from './settings/DataSettings';
 import { MoodSettings } from './settings/MoodSettings';
@@ -26,6 +29,7 @@ const SECTIONS: { id: string; label: string; icon: IconName }[] = [
   { id: 'data', label: 'Data & privacy', icon: 'lock' },
   { id: 'removed', label: 'Recently removed', icon: 'trash' },
   { id: 'guide', label: 'Guide & tips', icon: 'leaf' },
+  { id: 'updates', label: 'Updates', icon: 'sprout' },
   { id: 'about', label: 'Shortcuts & about', icon: 'info' },
 ];
 
@@ -75,6 +79,7 @@ export function SettingsView({ section }: { section: string | null }) {
           <DataSettings />
           <RemovedPhotos />
           <GuideSettings />
+          <UpdateSettings />
           <AboutSettings />
         </div>
       </div>
@@ -350,6 +355,75 @@ function GuideSettings() {
   );
 }
 
+function describeUpdate(status: UpdateStatus, format: AppState['format']): string {
+  const checked = status.checkedAt
+    ? ` Last checked ${format.medium(todayKey(new Date(status.checkedAt)))} at ${format.time(status.checkedAt)}.`
+    : '';
+  switch (status.state) {
+    case 'checking':
+      return 'Asking GitHub…';
+    case 'available':
+      return `mJournal ${status.latest} is out. You have ${status.current}.`;
+    case 'failed':
+      return `GitHub couldn’t be reached just now. Are you online?${checked}`;
+    case 'up-to-date':
+      return `You have the newest version.${checked}`;
+    case 'idle':
+    case 'off':
+      return 'Not checked yet.';
+  }
+}
+
+function UpdateSettings() {
+  const { settings, set, error } = useSetting();
+  const { format } = useApp();
+  const [status, setStatus] = useUpdateStatus();
+  const checkNow = async () => {
+    try {
+      setStatus(await api.updates.check());
+    } catch {
+      // The status line already says when GitHub couldn't be reached.
+    }
+  };
+  return (
+    <SettingsSection id="updates" title="Updates">
+      <div className="setting-row">
+        <div>
+          <h3>Check for new versions</h3>
+          <p className="muted">
+            About once a day, mJournal asks GitHub whether a newer version is out. That’s the only thing it ever asks the
+            internet: nothing about you or your journal is sent, and nothing is downloaded or installed by itself.
+          </p>
+        </div>
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={settings.checkForUpdates}
+            onChange={(event) => void set({ checkForUpdates: event.target.checked })}
+          />
+          <span className="visually-hidden">Check for new versions</span>
+        </label>
+      </div>
+      <div className="update-row">
+        <p className="update-status" aria-live="polite">
+          {status ? describeUpdate(status, format) : ''}
+        </p>
+        <div className="row-actions">
+          {status?.state === 'available' && (
+            <button type="button" className="btn btn-primary" onClick={openReleasePage}>
+              <Icon name="download" size={16} /> Get mJournal {status.latest}
+            </button>
+          )}
+          <button type="button" className="btn" disabled={status?.state === 'checking'} onClick={() => void checkNow()}>
+            <Icon name="restore" size={16} /> Check now
+          </button>
+        </div>
+      </div>
+      <ErrorLine error={error} />
+    </SettingsSection>
+  );
+}
+
 const SHORTCUTS: [string, string][] = [
   ['Ctrl + 1 … 6', 'Today, Calendar, Journal, Memories, Monthly, Insights'],
   ['Ctrl + ,', 'Settings'],
@@ -384,6 +458,10 @@ function AboutSettings() {
           </p>
           <p className="hand about-motto">My life doesn’t have to be perfect for it to be beautiful.</p>
           <p className="muted">A private place for the good, difficult, ordinary and meaningful moments. No accounts, ads or tracking.</p>
+          <p className="muted about-license">
+            Free and open source under the MIT License. Made with Electron, React and the Fraunces, Nunito and Caveat
+            fonts; their licenses are in THIRD-PARTY-NOTICES.txt in the mJournal folder.
+          </p>
         </div>
       </div>
     </SettingsSection>

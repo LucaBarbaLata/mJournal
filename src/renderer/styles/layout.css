@@ -157,6 +157,32 @@
   color: var(--ink-muted);
 }
 
+/* A newer version is out (components/UpdateNotice.tsx). */
+.update-notice {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--lavender-100);
+  background: linear-gradient(140deg, var(--lavender-50), var(--paper-raised) 80%);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+.update-notice-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.update-notice-text strong {
+  color: var(--ink);
+}
+.update-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* ---------- Main area ---------- */
 .main {
   position: relative;
@@ -309,6 +335,26 @@
   }
   .sidebar-foot {
     width: 100%;
+  }
+  /* The update note shrinks to its sparkle and two icon buttons (their labels stay readable to screen readers). */
+  .update-notice {
+    justify-items: center;
+    padding: 8px 0;
+  }
+  .update-notice-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .update-notice-actions {
+    flex-direction: column;
+  }
+  .update-notice-actions .btn {
+    width: 34px;
+    padding: 0;
   }
   .main-scroll {
     padding-left: 24px;

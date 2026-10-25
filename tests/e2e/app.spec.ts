@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import {
   callApi,
@@ -369,9 +371,54 @@ test('shows one-time tips that stay dismissed, and can bring them back', async (
 
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'Show tips again' }).click();
-  // exact: Settings also has a "Dates & calendar" link.
-  await page.getByRole('link', { name: 'Calendar', exact: true }).click();
+  // Not just "calendar": Settings also has a "Dates & calendar" link. (In a narrow window the
+  // sidebar shows icons only and the link is named by its tooltip, "Calendar (Ctrl+2)".)
+  await page.getByRole('link', { name: /^Calendar/ }).click();
   await expect(page.getByRole('complementary', { name: 'Tip' })).toContainText('Page Up / Page Down');
+});
+
+test('mentions a new version from GitHub, links to it and can put the note away', async () => {
+  // Stands in for GitHub's "latest release" answer, so the test never goes online.
+  const requests: string[] = [];
+  const github = createServer((request, response) => {
+    requests.push(request.headers['user-agent'] ?? '');
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ tag_name: 'v9.9.9', draft: false, prerelease: false }));
+  });
+  await new Promise<void>((resolve) => github.listen(0, '127.0.0.1', resolve));
+  const env = { MJOURNAL_UPDATE_URL: `http://127.0.0.1:${(github.address() as AddressInfo).port}/latest` };
+  try {
+    const dataDir = makeDataDir();
+    dirs.push(dataDir);
+    run = await launch(dataDir, { env });
+    let { app, page } = run;
+    await app.evaluate(({ shell }) => {
+      const opened: string[] = [];
+      (globalThis as { opened?: string[] }).opened = opened;
+      shell.openExternal = (async (url: string) => void opened.push(url)) as typeof shell.openExternal;
+    });
+
+    const note = page.getByRole('status', { name: 'New version' });
+    await expect(note).toContainText('mJournal 9.9.9 is out');
+    await note.getByRole('button', { name: 'Get it' }).click();
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as { opened?: string[] }).opened))
+      .toEqual(['https://github.com/LucaBarbaLata/mJournal/releases/latest']);
+    await note.getByRole('button', { name: 'Not now' }).click();
+    await expect(note).toHaveCount(0);
+    expect(requests).toEqual(['mJournal']);
+
+    // After a restart: no new request so soon, the note stays away, and Settings still knows.
+    await closeLikeUser(app);
+    run = await launch(dataDir, { env });
+    ({ app, page } = run);
+    await page.getByRole('link', { name: /^Settings/ }).click();
+    await expect(page.locator('#settings-updates')).toContainText('mJournal 9.9.9 is out. You have');
+    await expect(page.getByRole('status', { name: 'New version' })).toHaveCount(0);
+    expect(requests).toHaveLength(1);
+  } finally {
+    github.close();
+  }
 });
 
 test('can be used with the keyboard alone', async () => {

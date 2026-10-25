@@ -3,7 +3,7 @@
 #   mJournal-<version>-portable.exe  runs without installing
 appId: app.mjournal
 productName: mJournal
-copyright: mJournal
+copyright: Copyright © 2026 lucariki
 directories:
   output: release
   buildResources: build
@@ -11,6 +11,15 @@ files:
   - out/**/*
   - package.json
   - '!**/*.map'
+# mJournal's license and those of the packages inside it, next to mJournal.exe.
+extraFiles:
+  - from: LICENSE
+    to: LICENSE.txt
+  - from: THIRD-PARTY-NOTICES.txt
+    to: THIRD-PARTY-NOTICES.txt
+# No auto-updater (and no update metadata): mJournal only tells you when GitHub
+# has a newer version. Releases are published by .github/workflows/release.yml.
+publish: null
 # Electron's built-in security switches ("fuses"): the packaged app can't be
 # run as plain Node.js, can't be debugged from the command line, and only
 # loads its own verified code.

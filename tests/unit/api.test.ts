@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { API_METHODS } from '@core/api';
 import type { Settings } from '@core/api';
+import type { UpdateStatus } from '@core/updates';
 import { createApi, parseSearchQuery, type Platform } from '../../src/main/api';
 import { PNG_1PX, fakeClock, openHost, tempDir } from './helpers';
 
@@ -11,6 +12,8 @@ function setup(overrides: Partial<Platform> = {}) {
   const host = openHost(dir, fakeClock('2026-10-24T18:00:00Z'), 'US');
   const revealed: string[] = [];
   const changed: Settings[] = [];
+  const opened: string[] = [];
+  const upToDate: UpdateStatus = { state: 'up-to-date', current: '1.0.0', latest: null, checkedAt: '2026-10-24T18:00:00.000Z' };
   const platform: Platform = {
     appVersion: '1.0.0-test',
     platformName: 'test',
@@ -21,9 +24,11 @@ function setup(overrides: Partial<Platform> = {}) {
     showItemInFolder: (p) => revealed.push(p),
     openFolder: async () => undefined,
     settingsChanged: (s) => changed.push(s),
+    updates: { status: () => upToDate, check: async () => upToDate },
+    openReleasePage: async () => void opened.push('releases'),
     ...overrides,
   };
-  return { api: createApi(host, platform), host, dir, revealed, changed };
+  return { api: createApi(host, platform), host, dir, revealed, changed, opened };
 }
 
 describe('API handlers', () => {
@@ -118,5 +123,13 @@ describe('API handlers', () => {
     expect(info.dataDir).toBe(dir);
     expect(info.encryptedAtRest).toBe(false);
     expect(existsSync(info.databasePath)).toBe(true);
+  });
+
+  it('passes update checks to the platform, which only ever opens the releases page', async () => {
+    const { api, opened } = setup();
+    expect((await api.updates.status()).state).toBe('up-to-date');
+    expect((await api.updates.check()).state).toBe('up-to-date');
+    await api.updates.openReleasePage();
+    expect(opened).toEqual(['releases']);
   });
 });

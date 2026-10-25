@@ -10,6 +10,7 @@ import type { DateFormatPreference, DateKey, MonthKey, WeekStart } from './dates
 import type { MoodColor, MoodIcon } from './moods';
 import type { PromptCategory } from './prompts';
 import type { StreakSummary } from './streaks';
+import type { UpdateStatus } from './updates';
 
 // ---------------------------------------------------------------------------
 // Records
@@ -241,6 +242,10 @@ export interface Settings {
   onboardingDone: boolean;
   /** Ids of the one-time tips the user has dismissed. */
   dismissedTips: string[];
+  /** Whether mJournal asks GitHub about once a day if a newer version is out. */
+  checkForUpdates: boolean;
+  /** The newer version whose note the user put away with "Not now" ("" for none). */
+  dismissedUpdate: string;
 }
 
 export interface AppInfo {
@@ -369,6 +374,13 @@ export interface MJournalApi {
     /** Shows a backup or export saved during this session in the file manager. */
     showSavedFile(path: string): Promise<void>;
   };
+  updates: {
+    status(): Promise<UpdateStatus>;
+    /** Asks GitHub right away (the "Check now" button). */
+    check(): Promise<UpdateStatus>;
+    /** Opens the releases page on GitHub in the browser. Nothing is downloaded by mJournal itself. */
+    openReleasePage(): Promise<void>;
+  };
 }
 
 /** Helpers that live only in the preload script (no IPC round trip). */
@@ -379,6 +391,8 @@ export interface NativeBridge {
   onFlushRequest(callback: () => Promise<void> | void): () => void;
   /** Called when the main process asks the interface to open a route, e.g. from a reminder. */
   onNavigate(callback: (hash: string) => void): () => void;
+  /** Called whenever the update check's status changes. */
+  onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
 }
 
 type MethodNames<T> = { [K in keyof T]: readonly (keyof T[K] & string)[] };
@@ -428,6 +442,7 @@ export const API_METHODS = {
     'cancelRestore',
     'showSavedFile',
   ],
+  updates: ['status', 'check', 'openReleasePage'],
 } as const satisfies MethodNames<MJournalApi>;
 
 // Compile-time check that every method of MJournalApi is listed above.
@@ -451,4 +466,5 @@ export const EVENTS = {
   flushRequest: 'mj-event:flush-request',
   flushDone: 'mj-event:flush-done',
   navigate: 'mj-event:navigate',
+  updateStatus: 'mj-event:update-status',
 } as const;
