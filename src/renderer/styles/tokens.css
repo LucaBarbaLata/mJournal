@@ -1,0 +1,218 @@
+/*
+ * mJournal design tokens.
+ * Light theme: warm cream paper with dusty pink, lavender, peach and sage.
+ * Dark theme: a cozy evening journal — deep plum ink, candle-warm accents.
+ * The theme follows `prefers-color-scheme`, which the main process sets
+ * from the user's choice (Settings → Appearance) via nativeTheme.
+ * --chrome-bg must match CHROME_COLORS in src/core/theme.ts.
+ */
+:root {
+  color-scheme: light;
+
+  /* Paper & ink */
+  --paper: #fbf6ef;
+  --paper-raised: #fffdf9;
+  --paper-sunk: #f5ede3;
+  --paper-tint: #fdf7f1;
+  --chrome-bg: #f8f1e8;
+  --line: #ecdfd2;
+  --line-strong: #dfcebd;
+  --rule: rgb(201 167 150 / 0.22);
+  --ink: #3a2e38;
+  --ink-soft: #5b4a57;
+  --ink-muted: #76656f;
+  --ink-faint: #ab9ca4;
+
+  /* Accent families */
+  --rose-50: #fdf2f4;
+  --rose-100: #f9e3e8;
+  --rose-200: #f3cdd5;
+  --rose-300: #ebb4c0;
+  --rose-400: #df9aaa;
+  --rose-600: #b8667a;
+  --rose-700: #9a4d61;
+  --lavender-50: #f6f2fb;
+  --lavender-100: #ede5f7;
+  --lavender-300: #cbbbe8;
+  --lavender-500: #9c86cc;
+  --lavender-700: #6c56a0;
+  --peach-50: #fef5ee;
+  --peach-100: #fbe8da;
+  --peach-300: #f4c7a8;
+  --peach-600: #9a5832;
+  --sage-50: #f2f6f0;
+  --sage-100: #e4ede1;
+  --sage-300: #c2d5ba;
+  --sage-600: #66845d;
+  --sage-700: #52704c;
+  --gold-100: #fcf1d6;
+  --gold-300: #f1d595;
+  --gold-600: #a37a22;
+
+  --accent: var(--rose-300);
+  --accent-hover: var(--rose-400);
+  --accent-ink: #3a2430;
+  --accent-text: var(--rose-700);
+  --accent-soft: var(--rose-50);
+  --focus: #8466cc;
+  --danger: #a5463f;
+  --danger-hover: #8f3a34;
+  --danger-soft: #f8e3df;
+  --danger-text: #96403a;
+  --success-text: var(--sage-700);
+  --mark: #fbe0a8;
+
+  /* Mood palette: soft fills with a shared ink for faces */
+  --mood-ink: #4a3946;
+  --mood-gold: #f6d68f;
+  --mood-rose: #f3b9c6;
+  --mood-sage: #bfd7b6;
+  --mood-sand: #e6d6bf;
+  --mood-lavender: #d0c2ea;
+  --mood-mist: #bcdbdf;
+  --mood-sky: #bccfee;
+  --mood-coral: #f4bba9;
+  --mood-mauve: #dcb9dc;
+  --mood-blend: #e3c7da;
+  --mood-peach: #f7caa9;
+  --mood-mint: #bde3d2;
+
+  /* Typography */
+  --font-display: 'Fraunces Variable', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-ui: 'Nunito Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-hand: 'Caveat Variable', 'Segoe Print', 'Bradley Hand', cursive;
+  --font-writing: var(--font-display);
+  --writing-size: 1.0625rem;
+  --writing-leading: 1.8;
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.125rem;
+
+  /* Space */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 40px;
+  --s-9: 56px;
+
+  /* Shape */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  --r-full: 999px;
+
+  /* Depth */
+  --shadow-sm: 0 1px 2px rgb(90 58 74 / 0.06);
+  --shadow-md: 0 1px 2px rgb(90 58 74 / 0.05), 0 10px 28px -14px rgb(90 58 74 / 0.22);
+  --shadow-lg: 0 2px 6px rgb(60 36 52 / 0.08), 0 30px 70px -24px rgb(60 36 52 / 0.38);
+  --glow: radial-gradient(1200px 500px at 12% -10%, rgb(246 205 190 / 0.35), transparent 60%);
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
+
+  --sidebar-width: 244px;
+  --titlebar-height: 40px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --paper: #1f1a23;
+    --paper-raised: #28212d;
+    --paper-sunk: #19151d;
+    --paper-tint: #2b2330;
+    --chrome-bg: #1b1720;
+    --line: #382f3e;
+    --line-strong: #4a3f51;
+    --rule: rgb(214 177 196 / 0.09);
+    --ink: #f2e9ed;
+    --ink-soft: #d9cbd3;
+    --ink-muted: #b5a4af;
+    --ink-faint: #7f6f7a;
+
+    --rose-50: #33252f;
+    --rose-100: #3d2b37;
+    --rose-200: #57394a;
+    --rose-300: #e7a8b7;
+    --rose-400: #f0bcc8;
+    --rose-600: #f0b2c0;
+    --rose-700: #f4c3ce;
+    --lavender-50: #2a2433;
+    --lavender-100: #322a3e;
+    --lavender-300: #8f7bb8;
+    --lavender-500: #b8a3e8;
+    --lavender-700: #cfc0f2;
+    --peach-50: #33282a;
+    --peach-100: #3d2e2d;
+    --peach-300: #b98266;
+    --peach-600: #f1bf9d;
+    --sage-50: #242a25;
+    --sage-100: #2b332c;
+    --sage-300: #6f8a68;
+    --sage-600: #a9c79f;
+    --sage-700: #b9d4b0;
+    --gold-100: #3a3222;
+    --gold-300: #b8994d;
+    --gold-600: #f0d38d;
+
+    --accent: #e7a8b7;
+    --accent-hover: #f0bcc8;
+    --accent-ink: #2a1a24;
+    --accent-text: #f2b9c6;
+    --accent-soft: #33252f;
+    --focus: #bba6ef;
+    --danger: #d9776c;
+    --danger-hover: #e68b80;
+    --danger-soft: #3b2626;
+    --danger-text: #f0a097;
+    --success-text: #b9d4b0;
+    --mark: #6b5326;
+
+    --mood-ink: #2b2029;
+    --mood-gold: #e8c377;
+    --mood-rose: #e7a5b5;
+    --mood-sage: #a9c8a0;
+    --mood-sand: #d3bf9f;
+    --mood-lavender: #b9a8e0;
+    --mood-mist: #9dc6cb;
+    --mood-sky: #9fb8e3;
+    --mood-coral: #e6a28e;
+    --mood-mauve: #cba2cc;
+    --mood-blend: #d1aec5;
+    --mood-peach: #e8b48f;
+    --mood-mint: #9fd2bc;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-md: 0 1px 2px rgb(0 0 0 / 0.25), 0 12px 30px -14px rgb(0 0 0 / 0.55);
+    --shadow-lg: 0 2px 8px rgb(0 0 0 / 0.3), 0 30px 70px -20px rgb(0 0 0 / 0.7);
+    --glow: radial-gradient(1100px 520px at 10% -12%, rgb(240 170 120 / 0.09), transparent 62%);
+  }
+}
+
+:root[data-writing='sans'] {
+  --font-writing: var(--font-ui);
+  --writing-size: 1.03rem;
+}
+:root[data-writing='hand'] {
+  --font-writing: var(--font-hand);
+  --writing-size: 1.45rem;
+  --writing-leading: 1.55;
+}

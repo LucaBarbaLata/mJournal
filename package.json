@@ -1,0 +1,49 @@
+{
+  "name": "mjournal",
+  "productName": "mJournal",
+  "version": "1.0.0",
+  "description": "mJournal is a private, local-first journal for gratitude, reflection, moods and everyday memories.",
+  "author": "mJournal",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "out/main/index.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.e2e.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "electron-vite build && playwright test",
+    "icons": "electron scripts/render-icons.cjs",
+    "dist": "electron-vite build && electron-builder --win --publish never",
+    "verify": "npm run typecheck && npm run test && npm run test:e2e"
+  },
+  "dependencies": {
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1"
+  },
+  "devDependencies": {
+    "@fontsource-variable/caveat": "5.3.0",
+    "@fontsource-variable/fraunces": "5.3.0",
+    "@fontsource-variable/nunito": "5.3.0",
+    "@playwright/test": "1.64.0",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/yauzl": "3.4.0",
+    "@types/yazl": "3.3.1",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "44.7.0",
+    "electron-builder": "26.17.0",
+    "electron-vite": "5.0.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "typescript": "7.0.2",
+    "vite": "7.3.7",
+    "vitest": "5.0.3"
+  }
+}

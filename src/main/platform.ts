@@ -1,0 +1,65 @@
+/** Electron implementations of the dialogs and shell actions the API needs. */
+import { app, dialog, Notification, shell, type BrowserWindow } from 'electron';
+import { join } from 'node:path';
+import type { Settings } from '@core/api';
+import { UserFacingError } from '@core/validation';
+import type { Platform } from './api';
+
+export function electronPlatform(
+  getWindow: () => BrowserWindow | null,
+  settingsChanged: (settings: Settings) => void,
+): Platform {
+  // Look dialog functions up at call time (not destructured) so tests can stub them.
+  const parent = () => getWindow() ?? undefined;
+  return {
+    appVersion: app.getVersion(),
+    platformName: process.platform,
+    notificationsSupported: Notification.isSupported(),
+
+    async chooseImages() {
+      const options: Electron.OpenDialogOptions = {
+        title: 'Add photos',
+        buttonLabel: 'Add to this day',
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'] }],
+      };
+      const win = parent();
+      const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+      return result.canceled ? [] : result.filePaths;
+    },
+
+    async chooseBackupFile() {
+      const options: Electron.OpenDialogOptions = {
+        title: 'Choose an mJournal backup',
+        buttonLabel: 'Check this backup',
+        properties: ['openFile'],
+        filters: [{ name: 'mJournal backup', extensions: ['zip'] }],
+      };
+      const win = parent();
+      const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+      return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+    },
+
+    async chooseSaveLocation(defaultName, filter) {
+      const options: Electron.SaveDialogOptions = {
+        title: 'Save',
+        defaultPath: join(app.getPath('documents'), defaultName),
+        filters: [filter],
+      };
+      const win = parent();
+      const result = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
+      return result.canceled || !result.filePath ? null : result.filePath;
+    },
+
+    showItemInFolder(path) {
+      shell.showItemInFolder(path);
+    },
+
+    async openFolder(path) {
+      const error = await shell.openPath(path);
+      if (error) throw new UserFacingError('open-failed', `The folder couldn't be opened: ${error}`);
+    },
+
+    settingsChanged,
+  };
+}

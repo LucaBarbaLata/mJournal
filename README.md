@@ -1,0 +1,225 @@
+<p align="center">
+  <img src="build/icon.png" width="96" alt="The mJournal app icon: a cream letter m with a small sparkle on a pink-to-lavender tile">
+</p>
+
+<h1 align="center">mJournal</h1>
+
+<p align="center"><em>My life doesn’t have to be perfect for it to be beautiful.</em></p>
+
+mJournal is a private journal for your computer — a cozy place to notice the little things: a good conversation, a quiet
+moment, something you’re proud of, a song that fit the day. It runs entirely on your laptop, needs no account, and
+never sends your writing or photos anywhere.
+
+![Today’s page in mJournal: the date and a greeting, today’s question with an answer, a mood check-in with energy, free writing and photos](docs/screenshots/today.png)
+
+## What you can do
+
+- **Today’s page** — a warm greeting, a daily question that stays the same all day (ask for another one or skip it,
+  no guilt), optional extra prompts from a library of 176 questions or your own, free writing on a lined page, and
+  photos. Everything saves as you type, with a clear *Unsaved → Saving → Saved* indicator.
+- **Mood & energy** — ten friendly moods (rename, reorder, hide or add your own), a 1–5 energy scale and an optional
+  note. A mood on its own is enough for a day.
+- **Calendar** — a month view with moods and small markers for writing, photos and favorites. Jump to any month or
+  year, preview a day, open it. Days without an entry simply stay plain.
+- **Journal** — every saved day, newest first, with local full-text search and filters for dates, month, mood,
+  photos and favorites.
+- **Memories** — a scrapbook-style gallery of your photos by month, with captions and a larger viewer that links
+  back to the day.
+- **Monthly** — a letter to yourself: what you recorded (clearly labelled as data), the month’s photos, a few moments
+  picked by simple published rules, and your own reflection.
+- **Insights** — gentle numbers: an optional streak, days per month, mood history, average energy and a year in moods.
+  No points, no penalties.
+- **Backups** — complete backups in one `.zip`, a careful restore, JSON and CSV export, and daily safety snapshots.
+- **A welcome guide** — five short steps on the first start: your name, how a day works, where things live, privacy,
+  and your theme and font. Skip it any time, and open it again from *Settings → Guide & tips*. After the guide, each
+  page shows one small tip until you click *Got it*.
+- Light and dark (“evening journal”) themes, three writing fonts and keyboard shortcuts.
+- Gentle animations: pages slide in, cards appear one after another, and little sparkles or hearts show up when you
+  pick a mood, favorite something or save your first words of the day. They switch off with the Windows
+  *Animation effects* setting or *Settings → Appearance → Reduce motion*.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/calendar.png" alt="The calendar: a month of days with mood faces and markers, and a preview of the selected day"></td>
+    <td><img src="docs/screenshots/memories.png" alt="Memories: photos shown as polaroids with handwritten dates and captions"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/monthly-dark.png" alt="The monthly reflection in the dark theme: the month’s photos and moments to revisit"></td>
+    <td><img src="docs/screenshots/insights.png" alt="Insights: streak tiles, days journaled per month and the moods recorded"></td>
+  </tr>
+</table>
+
+## Install and open
+
+### Build it with one double-click
+
+1. Double-click **`Build mJournal.cmd`** in this folder.
+   The first build downloads about 300 MB of tools and takes a few minutes. If Node.js isn’t installed, a private copy
+   is downloaded into `.tools\` (checked against its official checksum) — nothing is installed system-wide.
+2. When it finishes, the `release` folder opens. It contains:
+   - **`mJournal-Setup-1.0.0.exe`** — installs mJournal for your Windows user (no administrator rights needed) with a
+     Start menu entry and a desktop shortcut. *Recommended for everyday use.*
+   - **`mJournal-1.0.0-portable.exe`** — runs without installing. It starts a little more slowly because it unpacks
+     itself each time.
+3. Open mJournal from its desktop shortcut or the Start menu (or double-click the portable `.exe`).
+
+> **“Windows protected your PC”** — Windows shows this for apps that aren’t code-signed. Choose **More info →
+> Run anyway**. mJournal isn’t signed because signing certificates are paid; you built it yourself from this source.
+
+### For developers
+
+```powershell
+npm ci
+node node_modules/electron/install.js   # fetches the Electron runtime (otherwise done on first run)
+npm run dev                              # live-reloading app; uses %APPDATA%\mJournal-dev, never your real journal
+```
+
+See [Development](#development) for tests and builds.
+
+## Where your journal is stored
+
+| What                                        | Where on Windows                                                        |
+| ------------------------------------------- | ----------------------------------------------------------------------- |
+| Your journal: database, photos, backups     | `%APPDATA%\mJournal` — e.g. `C:\Users\<you>\AppData\Roaming\mJournal`   |
+| Browser-engine cache (no journal content)   | `%LOCALAPPDATA%\mJournal\Chromium`                                      |
+
+Inside the journal folder:
+
+| Path                              | Contents                                                                               |
+| --------------------------------- | -------------------------------------------------------------------------------------- |
+| `mjournal.db`                     | SQLite database: days, moods, answers, monthly reflections, settings, photo references |
+| `photos\`                         | Copies of your photos, named after their content (identical photos are stored once)    |
+| `thumbnails\`                     | Small previews — only a cache, safe to delete                                          |
+| `backups\automatic\`              | Daily safety snapshots of the database (newest ten) and copies made before upgrades    |
+| `backups\previous-journal-…\`     | Your previous journal, kept whenever you restore a backup                              |
+| `logs\mjournal.log`               | A small technical log. It never contains your writing, moods, captions or photos       |
+
+**Settings → Data & privacy** shows the exact path and has an *Open data folder* button.
+
+- **Portable mode:** create a folder named `mJournal Data` next to `mJournal-1.0.0-portable.exe` and the portable app
+  keeps everything inside it — handy for a USB stick.
+- **Another location:** set the environment variable `MJOURNAL_DATA_DIR` to a folder before starting mJournal.
+- **Uninstalling never deletes your journal.**
+
+## Backups, restore and export
+
+All of these live in **Settings → Backup & export**.
+
+- **Complete backup** — *Create backup…* writes one file, `mJournal-backup-YYYY-MM-DD-HHMM.zip`, containing a
+  manifest, a consistent copy of the database and every photo. Keep it somewhere else: a USB drive, another disk.
+- **Restore** — *Restore…* first checks the backup: every file name must be one mJournal expects (no hidden or
+  absolute paths, no links), every file must match its SHA-256 checksum, and the database must pass SQLite’s
+  integrity check. You then see what’s in it next to what you have now, and nothing changes until you confirm.
+  Restoring **replaces** your journal — it does not merge. Your current journal is moved, not deleted, to
+  `backups\previous-journal-…`, so you can always go back.
+- **Daily safety snapshots** — once a day mJournal keeps a copy of the database in `backups\automatic` (the newest ten
+  are kept). Photos aren’t copied there because mJournal never deletes them silently. To use a snapshot: close
+  mJournal, move the current `mjournal.db` somewhere safe, copy the snapshot into its place and rename it to
+  `mjournal.db`.
+- **Export** — *JSON* contains everything in a structured form; *CSV* has one row per day and opens in a spreadsheet.
+
+## Privacy
+
+- **Local only.** No account, no cloud sync, no analytics, telemetry or ads. mJournal loads nothing from the web and
+  sends nothing anywhere; its fonts and icons are bundled. Search, statistics and backups all run on your computer.
+- **Not encrypted at rest.** Your journal is stored as ordinary files in your Windows user profile. Anyone who can
+  sign in to your account — or read your disk — can read them. Protect it with a password on your Windows account and
+  turn on device encryption (*BitLocker* or *Device encryption* in Windows settings). Backups and exports aren’t
+  encrypted either, so keep them somewhere private.
+- **Careful by design.** The interface runs in a sandbox with a strict content-security policy and can only call a
+  fixed list of functions, each of which validates its input. Photos are served by id, never by file path. New
+  windows, navigation and permission requests (camera, microphone, location…) are blocked. In the built app,
+  Electron’s security switches prevent it from being run as a plain Node.js program, from being debugged via command
+  line flags, and from loading code other than its own verified package.
+
+## How mJournal counts things
+
+- A day counts as **journaled** when anything was saved for it: a mood, energy, some words or a photo.
+- Your **current streak** is the number of days in a row up to today. If today is still empty, a streak that ended
+  yesterday still counts — the day isn’t over. A missed day is simply a day without an entry.
+- The **daily question** is chosen from the date, avoiding questions shown in the 90 days around it, and is remembered
+  once shown — reopening the app never changes it.
+- **Moments** in the monthly recap come only from: days you marked as favorites, answers you saved as favorite
+  moments, your longest entry (40+ words) and days with three or more photos. mJournal never writes or guesses
+  anything about how you felt.
+
+## Troubleshooting
+
+| Problem | What to do |
+| --- | --- |
+| “Windows protected your PC” | Choose **More info → Run anyway** (the app isn’t code-signed). |
+| mJournal says it couldn’t open your journal | Nothing has been deleted. *Open data folder* to look around, or *Set it aside and start a new journal*: the database is moved to `backups\damaged-journal-…`, and you can then restore a complete backup from Settings. |
+| “This journal was saved by a newer version of mJournal” | Your data is untouched. Build or install the newer version. |
+| A photo shows “Photo unavailable” | Its file is missing from `photos\` (Settings → Data & privacy counts these). Restoring a complete backup brings it back. |
+| iPhone photos (HEIC) are rejected | Save them as JPEG first — on the iPhone: *Settings → Camera → Formats → Most Compatible*; or open them in the Windows Photos app and *Save as* JPEG. |
+| The evening reminder doesn’t appear | It only works while mJournal is open (minimized is fine), stays quiet on days you’ve already written, and can be hidden by Windows *Do not disturb*. It works best with the installed version. |
+| `Build mJournal.cmd` fails | Check your internet connection (it downloads from npm, nodejs.org and GitHub), delete the `node_modules` folder and run it again. |
+| Something else | `logs\mjournal.log` in the data folder records technical errors (never journal content). |
+
+## Development
+
+**Requirements:** Windows 10 or 11 and Node.js 22.12 or newer (24 LTS recommended) — or let `Build mJournal.cmd`
+fetch one.
+
+| Command | What it does |
+| --- | --- |
+| `npm ci` | Installs the exact pinned dependency versions from `package-lock.json` |
+| `npm run dev` | Starts the app with live reload (data in `%APPDATA%\mJournal-dev`) |
+| `npm test` | Unit and integration tests (Vitest) — dates, streaks, prompts, database, photos, search, stats, exports, migrations, backup & restore |
+| `npm run test:e2e` | Builds the app, then drives the real app with Playwright in throwaway data folders |
+| `npm run typecheck` | Type-checks the main process, interface and tests |
+| `npm run dist` | Builds the installer and the portable `.exe` into `release\` |
+| `npm run icons` | Re-renders `build\icon.ico` and the PNG icons from `build\icon.svg` |
+| `npm run verify` | Type-check, unit tests and end-to-end tests in one go |
+
+### Stack
+
+mJournal is an [Electron](https://www.electronjs.org/) app: a React + TypeScript interface on top of a small Node.js
+core that owns the database and files. SQLite comes from Node’s built-in `node:sqlite` module, so there are no
+compiled add-ons to build. The full reasoning, data model and security model are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+| Dependency | Why |
+| --- | --- |
+| `electron` | Desktop window and its own Chromium — works offline, looks the same everywhere |
+| `react`, `react-dom` | Interface components |
+| `yazl`, `yauzl` | Writing and safely reading backup `.zip` files |
+| `@fontsource-variable/*` | Fraunces, Nunito and Caveat fonts, bundled so nothing loads from the internet |
+| `electron-vite`, `vite`, `@vitejs/plugin-react`, `typescript` | Build tooling |
+| `electron-builder` | Installer and portable `.exe` |
+| `vitest`, `@playwright/test` | Tests |
+
+All versions are pinned exactly in `package.json`.
+
+### Project layout
+
+```text
+src/
+  core/        Pure, tested logic shared by both sides: dates, moods, prompts, streaks, search, validation, API contract
+  main/        Electron main process
+    store/     SQLite access: migrations, entries, prompts, moods, photos, reflections, search, stats, settings
+    services/  Photo files, backups, restore, snapshots, exports
+    api.ts     Validates every call from the interface      host.ts  Owns the journal (and restores)
+    index.ts   App start-up, data folder, window             protocols.ts  app:// and mj-media://
+  preload/     The narrow bridge exposed to the interface
+  renderer/    React interface: views/, components/, lib/, styles/ (design tokens in styles/tokens.css)
+tests/unit/    Vitest tests          tests/e2e/   Playwright tests of the real app
+build/         Icon sources and packaging resources
+scripts/       Icon rendering and the Node.js download used by Build mJournal.cmd
+```
+
+## Known limitations
+
+- The journal isn’t encrypted at rest (see [Privacy](#privacy)).
+- Restoring a backup replaces the whole journal; there’s no merging of two journals.
+- One entry per day (with any number of prompts and photos).
+- HEIC/HEIF photos aren’t supported.
+- The evening reminder needs mJournal to be running.
+- Built and tested on Windows 11 only. macOS and Linux packaging is configured but hasn’t been tested.
+- The app isn’t code-signed, so Windows shows a SmartScreen warning the first time.
+- The interface is in English.
+
+## License
+
+No license has been chosen yet (`"license": "UNLICENSED"` in `package.json`), so all rights are reserved by the author
+until one is added.

@@ -1,0 +1,35 @@
+# Dependencies and local toolchain
+node_modules/
+.tools/
+
+# Build output
+out/
+release/
+dist/
+
+# Test output
+test-results/
+playwright-report/
+coverage/
+tests/.tmp/
+
+# Local data, never commit a journal
+*.db
+*.db-wal
+*.db-shm
+mJournal Data/
+mJournal-backup-*.zip
+mJournal-export-*.json
+mJournal-entries-*.csv
+
+# Local configuration and secrets
+.env
+.env.*
+*.local
+.vscode/settings.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log

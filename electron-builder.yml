@@ -1,0 +1,51 @@
+# Packaging for mJournal (npm run dist). Produces, in ./release:
+#   mJournal-Setup-<version>.exe     installer with Start menu and desktop shortcuts (no admin needed)
+#   mJournal-<version>-portable.exe  runs without installing
+appId: app.mjournal
+productName: mJournal
+copyright: mJournal
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+# Electron's built-in security switches ("fuses"): the packaged app can't be
+# run as plain Node.js, can't be debugged from the command line, and only
+# loads its own verified code.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: mJournal
+  uninstallDisplayName: mJournal
+  # Never delete the journal when the app is uninstalled.
+  deleteAppDataOnUninstall: false
+  artifactName: mJournal-Setup-${version}.${ext}
+portable:
+  artifactName: mJournal-${version}-portable.${ext}
+mac:
+  icon: build/icon.png
+  category: public.app-category.lifestyle
+  target: [dmg]
+linux:
+  icon: build/icon.png
+  category: Utility
+  target: [AppImage]

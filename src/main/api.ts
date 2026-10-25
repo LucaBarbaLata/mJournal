@@ -1,0 +1,347 @@
+/**
+ * Implementation of the renderer API. Every argument arrives from the
+ * renderer as `unknown` and is validated here before it reaches a store.
+ * Electron-specific actions (dialogs, folders) come in through `Platform`.
+ */
+import { basename } from 'node:path';
+import type { MJournalApi, SearchQuery, Settings } from '@core/api';
+import { addDays, todayKey, type DateKey } from '@core/dates';
+import { isMoodColor, isMoodIcon, MAX_MOOD_LABEL_LENGTH, type MoodColor, type MoodIcon } from '@core/moods';
+import { MAX_PROMPT_LENGTH, MONTHLY_KEYS } from '@core/prompts';
+import { MAX_TEXT_LENGTH } from '@core/text';
+import {
+  expectArray,
+  expectBoolean,
+  expectDateKey,
+  expectId,
+  expectInteger,
+  expectMonthKey,
+  expectNonEmptyText,
+  expectObject,
+  expectOneOf,
+  expectText,
+  ValidationError,
+} from '@core/validation';
+import type { JournalHost } from './host';
+import { writeBackup } from './services/backup';
+import { buildCsv, buildJsonExport } from './services/exporter';
+import { fileStamp, writeFileAtomic } from './services/fsutil';
+import { MAX_PHOTO_BYTES, MAX_THUMBNAIL_BYTES } from './services/photoFiles';
+import { listSnapshots } from './services/snapshots';
+import { MAX_CAPTION_LENGTH, MAX_IMPORT_BATCH } from './store/photos';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
+export interface Platform {
+  appVersion: string;
+  platformName: string;
+  notificationsSupported: boolean;
+  chooseImages(): Promise<string[]>;
+  chooseBackupFile(): Promise<string | null>;
+  chooseSaveLocation(defaultName: string, filter: { name: string; extensions: string[] }): Promise<string | null>;
+  showItemInFolder(path: string): void;
+  openFolder(path: string): Promise<void>;
+  settingsChanged(settings: Settings): void;
+}
+
+/** Same shape as MJournalApi, but every handler takes unvalidated arguments. */
+export type ApiHandlers = {
+  [N in keyof MJournalApi]: {
+    [M in keyof MJournalApi[N]]: MJournalApi[N][M] extends (...args: never[]) => infer R ? (...args: unknown[]) => R : never;
+  };
+};
+
+const PROMPT_ID_RE = /^[a-z0-9-]{1,40}$/;
+const TOKEN_RE = /^[0-9a-f]{32}$/;
+
+function expectPromptId(value: unknown): string {
+  if (typeof value !== 'string' || !PROMPT_ID_RE.test(value)) throw new ValidationError('Invalid prompt.');
+  return value;
+}
+
+function expectToken(value: unknown): string {
+  if (typeof value !== 'string' || !TOKEN_RE.test(value)) throw new ValidationError('Invalid restore request.');
+  return value;
+}
+
+function expectBytes(value: unknown, max: number, what: string): Uint8Array {
+  if (!(value instanceof Uint8Array)) throw new ValidationError(`Invalid ${what}.`);
+  if (value.byteLength > max) throw new ValidationError(`The ${what} is too large.`);
+  return value;
+}
+
+function optionalDate(value: unknown, what: string): DateKey | undefined {
+  return value === undefined || value === null || value === '' ? undefined : expectDateKey(value, what);
+}
+
+export function parseSearchQuery(input: unknown): SearchQuery {
+  const o = expectObject(input, 'search');
+  return {
+    text: o.text === undefined ? undefined : expectText(o.text, 'search text', 500),
+    from: optionalDate(o.from, 'start date'),
+    to: optionalDate(o.to, 'end date'),
+    moods: o.moods === undefined ? undefined : expectArray(o.moods, 50, 'moods').map((m) => expectId(m, 'mood')),
+    withPhotos: o.withPhotos === undefined ? undefined : expectBoolean(o.withPhotos),
+    favoritesOnly: o.favoritesOnly === undefined ? undefined : expectBoolean(o.favoritesOnly),
+    order: o.order === undefined ? undefined : expectOneOf(o.order, ['newest', 'oldest'] as const, 'order'),
+    cursor: o.cursor === undefined || o.cursor === null ? null : expectDateKey(o.cursor, 'cursor'),
+    limit: o.limit === undefined ? undefined : expectInteger(o.limit, 1, 100, 'limit'),
+  };
+}
+
+export function createApi(host: JournalHost, platform: Platform): ApiHandlers {
+  const j = () => host.journal;
+
+  /** Days up to tomorrow can be written (a little slack for clock and time-zone changes). */
+  const writableDate = (value: unknown): DateKey => {
+    const date = expectDateKey(value);
+    if (date > addDays(todayKey(j().clock()), 1)) throw new ValidationError("This day hasn't happened yet.");
+    return date;
+  };
+
+  // Files saved this session; only these may be revealed in the file manager.
+  const savedFiles = new Set<string>();
+
+  const exportTo = async (defaultName: string, filter: { name: string; extensions: string[] }, content: () => string) => {
+    const target = await platform.chooseSaveLocation(defaultName, filter);
+    if (!target) return { canceled: true };
+    const text = content();
+    await writeFileAtomic(target, text);
+    savedFiles.add(target);
+    return { canceled: false, path: target, bytes: Buffer.byteLength(text) };
+  };
+
+  return {
+    app: {
+      info: async () => ({
+        name: 'mJournal' as const,
+        version: platform.appVersion,
+        platform: platform.platformName,
+        dataDir: host.root,
+        notificationsSupported: platform.notificationsSupported,
+      }),
+    },
+
+    entries: {
+      getDay: async (date) => {
+        const d = expectDateKey(date);
+        return { date: d, entry: j().entries.get(d), answers: j().entries.answers(d), photos: j().photos.forDay(d) };
+      },
+      update: async (date, patch) => {
+        const d = writableDate(date);
+        const o = expectObject(patch, 'changes');
+        return j().entries.update(d, {
+          body: o.body === undefined ? undefined : expectText(o.body, 'entry'),
+          mood: o.mood === undefined ? undefined : o.mood === null ? null : expectId(o.mood, 'mood'),
+          moodNote: o.moodNote === undefined ? undefined : expectText(o.moodNote, 'mood note', 2000),
+          energy: o.energy === undefined ? undefined : o.energy === null ? null : expectInteger(o.energy, 1, 5, 'energy'),
+          favorite: o.favorite === undefined ? undefined : expectBoolean(o.favorite),
+        });
+      },
+      remove: async (date) => j().entries.remove(expectDateKey(date)),
+      saveAnswer: async (date, input) => {
+        const o = expectObject(input, 'answer');
+        return j().entries.saveAnswer(writableDate(date), {
+          promptId: expectPromptId(o.promptId),
+          promptText: expectNonEmptyText(o.promptText, 'a question', MAX_PROMPT_LENGTH * 2),
+          answer: expectText(o.answer, 'answer', MAX_TEXT_LENGTH),
+        });
+      },
+      removeAnswer: async (date, promptId) => j().entries.removeAnswer(expectDateKey(date), expectPromptId(promptId)),
+      setAnswerFavorite: async (date, promptId, favorite) =>
+        j().entries.setAnswerFavorite(expectDateKey(date), expectPromptId(promptId), expectBoolean(favorite)),
+      month: async (month) => j().entries.monthSummaries(expectMonthKey(month)),
+      onThisDay: async (date) => j().entries.onThisDay(expectDateKey(date)),
+    },
+
+    prompts: {
+      featured: async (date) => j().prompts.featured(expectDateKey(date)),
+      shuffle: async (date) => j().prompts.shuffle(expectDateKey(date)),
+      setSkipped: async (date, skipped) => j().prompts.setSkipped(expectDateKey(date), expectBoolean(skipped)),
+      library: async () => j().prompts.library(),
+      setFavorite: async (id, favorite) => j().prompts.setFavorite(expectPromptId(id), expectBoolean(favorite)),
+      setHidden: async (id, hidden) => j().prompts.setHidden(expectPromptId(id), expectBoolean(hidden)),
+      createCustom: async (text) => j().prompts.createCustom(expectNonEmptyText(text, 'a question', MAX_PROMPT_LENGTH)),
+      updateCustom: async (id, patch) => {
+        const o = expectObject(patch, 'changes');
+        return j().prompts.updateCustom(expectPromptId(id), {
+          text: o.text === undefined ? undefined : expectNonEmptyText(o.text, 'a question', MAX_PROMPT_LENGTH),
+          inRotation: o.inRotation === undefined ? undefined : expectBoolean(o.inRotation),
+        });
+      },
+      archiveCustom: async (id) => j().prompts.archiveCustom(expectPromptId(id)),
+    },
+
+    moods: {
+      list: async () => j().moods.list(),
+      create: async (input) => {
+        const o = expectObject(input, 'mood');
+        if (!isMoodIcon(o.icon) || !isMoodColor(o.color)) throw new ValidationError('Please choose an icon and a color.');
+        return j().moods.create({
+          label: expectNonEmptyText(o.label, 'a name for the mood', MAX_MOOD_LABEL_LENGTH),
+          icon: o.icon,
+          color: o.color,
+        });
+      },
+      update: async (key, patch) => {
+        const o = expectObject(patch, 'changes');
+        if (o.icon !== undefined && !isMoodIcon(o.icon)) throw new ValidationError('Invalid icon.');
+        if (o.color !== undefined && !isMoodColor(o.color)) throw new ValidationError('Invalid color.');
+        return j().moods.update(expectId(key, 'mood'), {
+          label: o.label === undefined ? undefined : expectNonEmptyText(o.label, 'a name for the mood', MAX_MOOD_LABEL_LENGTH),
+          icon: o.icon as MoodIcon | undefined,
+          color: o.color as MoodColor | undefined,
+          hidden: o.hidden === undefined ? undefined : expectBoolean(o.hidden),
+        });
+      },
+      reorder: async (keys) => j().moods.reorder(expectArray(keys, 100, 'moods').map((k) => expectId(k, 'mood'))),
+      resetDefaults: async () => j().moods.resetDefaults(),
+    },
+
+    photos: {
+      pickAndImport: async (date) => {
+        const d = writableDate(date);
+        const paths = await platform.chooseImages();
+        if (paths.length === 0) return { imported: [], rejected: [] };
+        return j().photos.importSources(
+          d,
+          paths.map((path) => ({ name: basename(path), path })),
+        );
+      },
+      importFiles: async (date, paths) => {
+        const d = writableDate(date);
+        const list = expectArray(paths, MAX_IMPORT_BATCH, 'files').map((p) => expectText(p, 'file path', 4096));
+        return j().photos.importSources(
+          d,
+          list.map((path) => ({ name: basename(path), path })),
+        );
+      },
+      importData: async (date, files) => {
+        const d = writableDate(date);
+        const list = expectArray(files, MAX_IMPORT_BATCH, 'files').map((file) => {
+          const o = expectObject(file, 'file');
+          return { name: expectText(o.name, 'file name', 255), data: expectBytes(o.data, MAX_PHOTO_BYTES, 'photo') };
+        });
+        return j().photos.importSources(d, list);
+      },
+      update: async (id, patch) => {
+        const o = expectObject(patch, 'changes');
+        return j().photos.update(expectId(id, 'photo'), {
+          caption: o.caption === undefined ? undefined : expectText(o.caption, 'caption', MAX_CAPTION_LENGTH),
+          favorite: o.favorite === undefined ? undefined : expectBoolean(o.favorite),
+        });
+      },
+      reorder: async (date, ids) =>
+        j().photos.reorder(expectDateKey(date), expectArray(ids, 200, 'photos').map((id) => expectId(id, 'photo'))),
+      remove: async (id) => j().photos.remove(expectId(id, 'photo')),
+      restore: async (id) => j().photos.restore(expectId(id, 'photo')),
+      deleteForever: async (id) => j().photos.deleteForever(expectId(id, 'photo')),
+      listRemoved: async () => j().photos.listRemoved(),
+      gallery: async (filter) => {
+        const o = expectObject(filter, 'filter');
+        return j().photos.gallery({ from: optionalDate(o.from, 'start date'), to: optionalDate(o.to, 'end date') });
+      },
+      galleryMonths: async () => j().photos.galleryMonths(),
+      saveThumbnail: async (id, data, width, height) =>
+        j().photos.saveThumbnail(
+          expectId(id, 'photo'),
+          expectBytes(data, MAX_THUMBNAIL_BYTES, 'thumbnail'),
+          expectInteger(width, 1, 100_000, 'width'),
+          expectInteger(height, 1, 100_000, 'height'),
+        ),
+      showInFolder: async (id) => {
+        const path = j().photos.mediaPath('photo', expectId(id, 'photo'));
+        if (path && existsSync(path)) platform.showItemInFolder(path);
+        else await platform.openFolder(j().paths.photos);
+      },
+    },
+
+    journal: {
+      search: async (query) => j().search.search(parseSearchQuery(query)),
+      months: async () => j().search.months(),
+    },
+
+    months: {
+      recap: async (month) => j().reflections.recap(expectMonthKey(month)),
+      saveReflection: async (month, key, answer) =>
+        j().reflections.save(expectMonthKey(month), expectOneOf(key, MONTHLY_KEYS, 'question'), expectText(answer, 'reflection')),
+    },
+
+    stats: {
+      overview: async (today, range) =>
+        j().stats.overview(expectDateKey(today), expectOneOf(range, ['month', 'quarter', 'year', 'all'] as const, 'range')),
+      yearInMoods: async (year) => j().stats.yearInMoods(expectInteger(year, 1900, 2999, 'year')),
+    },
+
+    settings: {
+      get: async () => j().settings.get(),
+      update: async (patch) => {
+        const settings = j().settings.update(expectObject(patch, 'settings'));
+        platform.settingsChanged(settings);
+        return settings;
+      },
+    },
+
+    data: {
+      info: async () => {
+        const journal = j();
+        const photos = journal.photos.stats();
+        const backups = journal.paths.backups;
+        const previousJournals = existsSync(backups)
+          ? readdirSync(backups)
+              .filter((name) => name.startsWith('previous-journal-'))
+              .map((name) => ({ name, path: join(backups, name) }))
+          : [];
+        return {
+          dataDir: journal.paths.root,
+          databasePath: journal.paths.database,
+          photosDir: journal.paths.photos,
+          backupsDir: backups,
+          databaseBytes: existsSync(journal.paths.database) ? statSync(journal.paths.database).size : 0,
+          photoCount: photos.active,
+          photoBytes: photos.bytes,
+          removedPhotoCount: photos.removed,
+          missingPhotoCount: photos.missing,
+          entryCount: journal.entries.contentDays().length,
+          schemaVersion: journal.db.userVersion,
+          snapshots: listSnapshots(journal.paths.snapshots),
+          previousJournals,
+          encryptedAtRest: false as const,
+        };
+      },
+      openFolder: async (which) => {
+        const target = expectOneOf(which, ['data', 'backups'] as const, 'folder');
+        await platform.openFolder(target === 'backups' ? j().paths.backups : j().paths.root);
+      },
+      exportJson: async () =>
+        exportTo(`mJournal-export-${fileStamp(j().clock())}.json`, { name: 'JSON', extensions: ['json'] }, () =>
+          JSON.stringify(buildJsonExport(j(), platform.appVersion), null, 2),
+        ),
+      exportCsv: async () =>
+        exportTo(`mJournal-entries-${fileStamp(j().clock())}.csv`, { name: 'CSV spreadsheet', extensions: ['csv'] }, () =>
+          buildCsv(j()),
+        ),
+      createBackup: async () => {
+        const target = await platform.chooseSaveLocation(`mJournal-backup-${fileStamp(j().clock())}.zip`, {
+          name: 'mJournal backup',
+          extensions: ['zip'],
+        });
+        if (!target) return { canceled: true };
+        const { bytes } = await writeBackup(j(), target, platform.appVersion);
+        j().settings.setInternal('lastBackupAt', j().clock().toISOString());
+        savedFiles.add(target);
+        return { canceled: false, path: target, bytes };
+      },
+      inspectBackup: async () => {
+        const file = await platform.chooseBackupFile();
+        return file ? host.inspectBackup(file) : null;
+      },
+      restoreBackup: async (token) => host.restore(expectToken(token)),
+      cancelRestore: async (token) => host.cancelRestore(expectToken(token)),
+      showSavedFile: async (path) => {
+        const target = expectText(path, 'file path', 4096);
+        if (savedFiles.has(target) && existsSync(target)) platform.showItemInFolder(target);
+      },
+    },
+  };
+}
