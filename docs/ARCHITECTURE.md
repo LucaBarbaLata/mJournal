@@ -163,12 +163,13 @@ answer. Development builds don’t check automatically; end-to-end tests point `
 
 ## Releases
 
-`.github/workflows/release.yml` runs on GitHub Actions when a `vX.Y.Z` tag is pushed (`npm version patch` then
-`git push --follow-tags`). On a Windows runner it checks that the tag matches `package.json`, runs `npm ci` and
-`npm run verify`, builds with `npm run dist`, writes `SHA256SUMS.txt` and publishes the installer, the portable app
-and the checksums with `gh release create`. electron-builder itself never publishes (`publish: null`), so no
-auto-update metadata is produced. Running the workflow by hand builds and tests without releasing and keeps the files
-as a run artifact.
+`.github/workflows/release.yml` is started by hand (*Run workflow*) with a choice of draft, pre-release or release.
+On a Windows runner it first stops if the version in `package.json` is already published, then runs `npm ci` and
+`npm run verify`, builds with `npm run dist`, writes `SHA256SUMS.txt` and creates the release `v<version>` at the built
+commit with `gh release create` (replacing an earlier draft of the same version). There is deliberately no tag
+trigger: publishing a draft creates its tag, which would otherwise start a second run. The update check reads GitHub’s
+“latest release”, which never includes drafts or pre-releases. electron-builder itself never publishes
+(`publish: null`), so no auto-update metadata is produced.
 
 `THIRD-PARTY-NOTICES.txt` is generated from `node_modules` by `scripts/notices.cjs` (`npm run notices`) and shipped next
 to the executable together with `LICENSE`; `tests/unit/notices.test.ts` fails when it is out of date.

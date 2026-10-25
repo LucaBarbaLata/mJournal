@@ -1,23 +1,29 @@
-# Builds mJournal on Windows, tests it and publishes it as a GitHub release.
+# Builds mJournal on Windows, tests it and puts it on the GitHub Releases page.
 #
-# To release a new version:
-#   npm version patch        (or minor / major: updates package.json, commits and tags vX.Y.Z)
-#   git push --follow-tags
-#
-# Running it by hand (Actions → Release → Run workflow) builds and tests without
-# releasing; the installers are attached to that run for 14 days.
+# To release a version:
+#   1. Raise the version: npm version patch --no-git-tag-version (or minor / major), then commit and push.
+#      (Skip this for the very first release, 1.0.0.)
+#   2. On GitHub: Actions → Release → Run workflow, and pick what to make:
+#        draft        only you can see it; check it, then press "Publish release" on GitHub
+#        pre-release  public, but the app's update check ignores it (a release candidate)
+#        release      public, and the app tells people about it
+# The tag (v1.0.0, …) is created when the release is published.
 name: Release
 
 on:
-  push:
-    tags: ['v*.*.*']
   workflow_dispatch:
+    inputs:
+      kind:
+        description: 'draft = only you see it until you publish it · pre-release = public, the app ignores it · release = public, the app announces it'
+        type: choice
+        default: draft
+        options: [draft, pre-release, release]
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -30,23 +36,25 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read the version and check it isn't released yet
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $json = gh release view "v$version" --repo $env:GITHUB_REPOSITORY --json isDraft 2>$null
+          $existing = if ($LASTEXITCODE -eq 0 -and $json) { $json | ConvertFrom-Json } else { $null }
+          if ($existing -and -not $existing.isDraft) {
+            throw "mJournal $version is already on the Releases page. Raise the version first (npm version patch --no-git-tag-version), commit, push and run this again."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          exit 0
+
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
-
-      - name: Read the version
-        id: version
-        shell: pwsh
-        env:
-          TAG: ${{ github.ref_name }}
-          IS_TAG: ${{ github.ref_type == 'tag' }}
-        run: |
-          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ($env:IS_TAG -eq 'true' -and $env:TAG -ne "v$version") {
-            throw "The tag $env:TAG doesn't match the version in package.json ($version)."
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
 
       - run: npm ci
 
@@ -70,30 +78,28 @@ jobs:
             Set-Content release/SHA256SUMS.txt -Encoding ascii
           Get-Content release/SHA256SUMS.txt
 
-      - name: Keep the build (manual runs)
-        if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@v7
-        with:
-          name: mJournal-${{ steps.version.outputs.version }}-${{ github.sha }}
-          path: |
-            release/mJournal-Setup-${{ steps.version.outputs.version }}.exe
-            release/mJournal-${{ steps.version.outputs.version }}-portable.exe
-            release/SHA256SUMS.txt
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish the release
-        if: github.ref_type == 'tag'
+      - name: Put it on the Releases page
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
           VERSION: ${{ steps.version.outputs.version }}
+          KIND: ${{ inputs.kind }}
         run: |
-          gh release create $env:TAG `
+          $tag = "v$env:VERSION"
+          # A draft left by an earlier run for this version is replaced.
+          $json = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0 -and $json -and ($json | ConvertFrom-Json).isDraft) {
+            gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes
+          }
+          $flag = @{ 'draft' = '--draft'; 'pre-release' = '--prerelease'; 'release' = '--latest' }[$env:KIND]
+          gh release create $tag `
             "release/mJournal-Setup-$env:VERSION.exe" `
             "release/mJournal-$env:VERSION-portable.exe" `
             release/SHA256SUMS.txt `
             --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
             --title "mJournal $env:VERSION" `
-            --generate-notes
+            --generate-notes `
+            $flag
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "Made a $env:KIND for mJournal ${env:VERSION}: https://github.com/$env:GITHUB_REPOSITORY/releases"

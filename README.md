@@ -197,17 +197,22 @@ fetch one.
 
 ### Releasing a version
 
-```powershell
-npm version patch        # or minor / major: updates package.json, commits and tags v1.0.1
-git push --follow-tags
-```
+1. Raise the version (skip this for the first release, 1.0.0), then commit and push:
 
-Pushing the tag starts [.github/workflows/release.yml](.github/workflows/release.yml) on GitHub Actions. It type-checks
-and tests everything, builds the installer and the portable app on Windows, and publishes them with a `SHA256SUMS.txt`
-as a GitHub release, where the app’s update check finds them. Edit the release notes on GitHub afterwards if you like.
-To try the build without releasing, run the workflow by hand (*Actions → Release → Run workflow*); the files are
-attached to that run. The repository has to be public for people to download releases and for the update check to
-see them.
+   ```powershell
+   npm version patch --no-git-tag-version   # or minor / major: updates package.json and package-lock.json
+   ```
+
+2. On GitHub, open **Actions → Release → Run workflow** and pick what to make:
+   - **draft** — only you can see it. Download and try the installers, then press *Publish release* on GitHub.
+   - **pre-release** — public, but the app’s update check ignores it: a release candidate for testers.
+   - **release** — public, and everyone’s mJournal mentions it in the sidebar.
+
+[.github/workflows/release.yml](.github/workflows/release.yml) type-checks and tests everything, builds the installer
+and the portable app on Windows and puts them on the Releases page with a `SHA256SUMS.txt`. The `v1.0.0`-style tag is
+created when the release is published. Running it again for the same version replaces a draft; a version that is
+already published stops right away and asks you to raise the version. The repository has to be public for people to
+download releases and for the update check to see them.
 
 ### Stack
 
