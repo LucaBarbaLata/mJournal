@@ -5,6 +5,7 @@ import { API_METHODS } from '@core/api';
 import type { Settings } from '@core/api';
 import type { UpdateStatus } from '@core/updates';
 import { createApi, parseSearchQuery, type Platform } from '../../src/main/api';
+import { AppLock } from '../../src/main/lock';
 import { PNG_1PX, fakeClock, openHost, tempDir } from './helpers';
 
 function setup(overrides: Partial<Platform> = {}) {
@@ -28,7 +29,8 @@ function setup(overrides: Partial<Platform> = {}) {
     openReleasePage: async () => void opened.push('releases'),
     ...overrides,
   };
-  return { api: createApi(host, platform), host, dir, revealed, changed, opened };
+  const appLock = AppLock.load(join(dir, 'lock.json'));
+  return { api: createApi(host, platform, appLock), appLock, host, dir, revealed, changed, opened };
 }
 
 describe('API handlers', () => {

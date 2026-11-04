@@ -6,6 +6,7 @@ import { ToastHost } from './components/Toasts';
 import { UpdateNotice } from './components/UpdateNotice';
 import { native } from './lib/api';
 import { AppProvider, useApp } from './lib/app';
+import { LockProvider, useLock } from './lib/lock';
 import { href, navigate, useRoute, type RouteName } from './lib/router';
 import { saveQueue } from './lib/saveQueue';
 import { useToday } from './lib/time';
@@ -13,6 +14,7 @@ import { CalendarView } from './views/CalendarView';
 import { DayView } from './views/DayView';
 import { InsightsView } from './views/InsightsView';
 import { JournalView } from './views/JournalView';
+import { LockScreen } from './views/LockScreen';
 import { MemoriesView } from './views/MemoriesView';
 import { MonthView } from './views/MonthView';
 import { Onboarding } from './views/Onboarding';
@@ -75,6 +77,7 @@ function Sidebar({ active }: { active: RouteName }) {
   const current = active === 'day' ? 'today' : active;
   const navRef = useRef<HTMLElement>(null);
   const { pill, animate } = useNavPill(navRef, current);
+  const { status: lock, lockNow } = useLock();
   return (
     <nav className="sidebar" aria-label="Main" ref={navRef}>
       {pill && (
@@ -105,6 +108,12 @@ function Sidebar({ active }: { active: RouteName }) {
       </ul>
       <div className="sidebar-foot">
         <UpdateNotice />
+        {lock.enabled && (
+          <button type="button" className="nav-item nav-button" onClick={() => void lockNow()} title="Lock mJournal (Ctrl+L)">
+            <Icon name="lock" size={20} />
+            <span className="nav-label">Lock</span>
+          </button>
+        )}
         <a
           href={href.settings()}
           className="nav-item"
@@ -146,19 +155,7 @@ function Routes() {
 function Shell() {
   const route = useRoute();
   const { settings } = useApp();
-
-  useEffect(() => {
-    // Save everything before the window closes, and before reloading.
-    const stopFlush = native.onFlushRequest(() => saveQueue.flush());
-    const stopNavigate = native.onNavigate((hash) => navigate(hash));
-    const beforeUnload = () => void saveQueue.flush();
-    window.addEventListener('beforeunload', beforeUnload);
-    return () => {
-      stopFlush();
-      stopNavigate();
-      window.removeEventListener('beforeunload', beforeUnload);
-    };
-  }, []);
+  const { status: lock, lockNow } = useLock();
 
   useEffect(() => {
     // Files dropped outside a drop zone must never navigate the window.
@@ -191,11 +188,14 @@ function Shell() {
       } else if (event.key.toLowerCase() === 's') {
         event.preventDefault();
         void saveQueue.flush();
+      } else if (event.key.toLowerCase() === 'l' && lock.enabled) {
+        event.preventDefault();
+        void lockNow();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [lock.enabled, lockNow]);
 
   useEffect(() => {
     document.querySelector('.main-scroll')?.scrollTo({ top: 0 });
@@ -221,9 +221,26 @@ function Shell() {
 }
 
 export function App() {
+  useEffect(() => {
+    // Save everything before the window closes, and before reloading. Lives here, not in Shell,
+    // so closing works the same while locked.
+    const stopFlush = native.onFlushRequest(() => saveQueue.flush());
+    const stopNavigate = native.onNavigate((hash) => navigate(hash));
+    const beforeUnload = () => void saveQueue.flush();
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => {
+      stopFlush();
+      stopNavigate();
+      window.removeEventListener('beforeunload', beforeUnload);
+    };
+  }, []);
+
+  // While locked, the lock screen replaces everything below, so no journal data is loaded or shown.
   return (
-    <AppProvider fallback={<Splash />}>
-      <Shell />
-    </AppProvider>
+    <LockProvider fallback={<Splash />} locked={(status, setStatus) => <LockScreen status={status} onStatus={setStatus} />}>
+      <AppProvider fallback={<Splash />}>
+        <Shell />
+      </AppProvider>
+    </LockProvider>
   );
 }

@@ -11,6 +11,7 @@
     "url": "git+https://github.com/LucaBarbaLata/mJournal.git"
   },
   "private": true,
+  "desktopName": "mjournal.desktop",
   "main": "out/main/index.js",
   "engines": {
     "node": ">=22.12.0"
@@ -26,6 +27,7 @@
     "icons": "electron scripts/render-icons.cjs",
     "notices": "node scripts/notices.cjs",
     "dist": "electron-vite build && electron-builder --win --publish never",
+    "dist:linux": "electron-vite build && electron-builder --linux --publish never",
     "verify": "npm run typecheck && npm run test && npm run test:e2e"
   },
   "dependencies": {

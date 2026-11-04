@@ -62,7 +62,8 @@ export function createMainWindow(options: {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      spellcheck: true,
+      // Linux has no system spell checker for Chromium to use, only dictionaries downloaded from Google.
+      spellcheck: process.platform !== 'linux',
     },
   });
 

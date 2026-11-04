@@ -124,6 +124,15 @@
     background-color var(--dur-1) var(--ease),
     color var(--dur-1) var(--ease);
 }
+/* "Lock" in the sidebar is a button that looks like the links around it. */
+.nav-button {
+  width: 100%;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 .nav-item svg {
   flex: none;
   color: var(--ink-muted);

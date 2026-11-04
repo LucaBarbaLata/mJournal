@@ -15,6 +15,7 @@ import { useUpdateStatus } from '../lib/updates';
 import { BackupSettings } from './settings/BackupSettings';
 import { DataSettings, RemovedPhotos } from './settings/DataSettings';
 import { MoodSettings } from './settings/MoodSettings';
+import { PinSettings } from './settings/PinSettings';
 import { PromptSettings } from './settings/PromptSettings';
 import './settings.css';
 
@@ -25,8 +26,9 @@ const SECTIONS: { id: string; label: string; icon: IconName }[] = [
   { id: 'moods', label: 'Moods', icon: 'heart' },
   { id: 'prompts', label: 'Prompts', icon: 'quote' },
   { id: 'streaks', label: 'Streaks & reminder', icon: 'bell' },
+  { id: 'pin', label: 'PIN lock', icon: 'lock' },
   { id: 'backup', label: 'Backup & export', icon: 'download' },
-  { id: 'data', label: 'Data & privacy', icon: 'lock' },
+  { id: 'data', label: 'Data & privacy', icon: 'folder' },
   { id: 'removed', label: 'Recently removed', icon: 'trash' },
   { id: 'guide', label: 'Guide & tips', icon: 'leaf' },
   { id: 'updates', label: 'Updates', icon: 'sprout' },
@@ -75,6 +77,7 @@ export function SettingsView({ section }: { section: string | null }) {
           <MoodSettings />
           <PromptSettings />
           <StreakSettings />
+          <PinSettings />
           <BackupSettings />
           <DataSettings />
           <RemovedPhotos />
@@ -429,6 +432,7 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl + ,', 'Settings'],
   ['Ctrl + F', 'Search your journal'],
   ['Ctrl + S', 'Save now (mJournal also saves as you type)'],
+  ['Ctrl + L', 'Lock mJournal (when a PIN is set)'],
   ['Alt + ← / →', 'Previous / next day'],
   ['Arrow keys', 'Move around the calendar; Page Up / Page Down change month'],
   ['Esc', 'Close a dialog or photo'],

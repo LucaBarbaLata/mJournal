@@ -1,4 +1,4 @@
-# Builds mJournal on Windows, tests it and puts it on the GitHub Releases page.
+# Builds mJournal for Windows and Linux, tests it on both and puts it on the GitHub Releases page.
 #
 # To release a version:
 #   1. Raise the version: npm version patch --no-git-tag-version (or minor / major), then commit and push.
@@ -21,7 +21,7 @@ on:
         options: [draft, pre-release, release]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
@@ -31,6 +31,9 @@ jobs:
   # Quick: decides whether anything needs building, and promotes a release candidate.
   check:
     runs-on: ubuntu-latest
+    # Write access only for promoting a pre-release.
+    permissions:
+      contents: write
     timeout-minutes: 5
     outputs:
       version: ${{ steps.check.outputs.version }}
@@ -76,10 +79,13 @@ jobs:
           "build=$build" >> $env:GITHUB_OUTPUT
           exit 0
 
-  release:
+  windows:
+    name: Windows build
     needs: check
     if: needs.check.outputs.build == 'true'
     runs-on: windows-latest
+    permissions:
+      contents: read
     # Generous: packing the portable app can stall while a virus scanner reads it.
     timeout-minutes: 60
     env:
@@ -106,35 +112,109 @@ jobs:
       - name: Build the installer and the portable app
         run: npm run dist
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: |
+            release/mJournal-Setup-${{ env.VERSION }}.exe
+            release/mJournal-${{ env.VERSION }}-portable.exe
+          if-no-files-found: error
+          retention-days: 3
+
+  linux:
+    name: Linux build
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Download the Electron runtime
+        run: node node_modules/electron/install.js
+
+      # Ubuntu 24.04 lets only programs with an AppArmor profile use the kernel feature Chromium's
+      # sandbox relies on. The Electron the tests start has none (the .deb installs one), so allow it here.
+      - name: Let the test copy of Electron use its sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # There is no screen on the runner; xvfb-run gives the app a virtual one.
+      - name: Type-check and test (unit and end-to-end)
+        run: xvfb-run --auto-servernum npm run verify
+
+      - name: Build the .deb and the AppImage
+        run: npm run dist:linux
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            release/mjournal_${{ env.VERSION }}_amd64.deb
+            release/mJournal-${{ env.VERSION }}.AppImage
+          if-no-files-found: error
+          retention-days: 3
+
+  # Only runs when both builds passed, so a release always has every file.
+  publish:
+    name: Put it on the Releases page
+    needs: [check, windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+
       - name: Write checksums
-        shell: pwsh
+        working-directory: release
         run: |
-          Get-FileHash "release/mJournal-Setup-$env:VERSION.exe", "release/mJournal-$env:VERSION-portable.exe" -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
-            Set-Content release/SHA256SUMS.txt -Encoding ascii
-          Get-Content release/SHA256SUMS.txt
+          sha256sum -- "mJournal-Setup-$VERSION.exe" "mJournal-$VERSION-portable.exe" \
+            "mjournal_${VERSION}_amd64.deb" "mJournal-$VERSION.AppImage" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Put it on the Releases page
-        shell: pwsh
+        working-directory: release
         env:
           GH_TOKEN: ${{ github.token }}
           KIND: ${{ inputs.kind }}
         run: |
-          $tag = "v$env:VERSION"
+          tag="v$VERSION"
           # A draft left by an earlier run for this version is replaced.
-          $json = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft 2>$null
-          if ($LASTEXITCODE -eq 0 -and $json -and ($json | ConvertFrom-Json).isDraft) {
-            gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes
-          }
-          $flag = @{ 'draft' = '--draft'; 'pre-release' = '--prerelease'; 'release' = '--latest' }[$env:KIND]
-          gh release create $tag `
-            "release/mJournal-Setup-$env:VERSION.exe" `
-            "release/mJournal-$env:VERSION-portable.exe" `
-            release/SHA256SUMS.txt `
-            --repo $env:GITHUB_REPOSITORY `
-            --target $env:GITHUB_SHA `
-            --title "mJournal $env:VERSION" `
-            --generate-notes `
-            $flag
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "Made a $env:KIND for mJournal ${env:VERSION}: https://github.com/$env:GITHUB_REPOSITORY/releases"
+          if [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = "true" ]; then
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
+          fi
+          case "$KIND" in
+            draft) flag=--draft ;;
+            pre-release) flag=--prerelease ;;
+            *) flag=--latest ;;
+          esac
+          gh release create "$tag" \
+            "mJournal-Setup-$VERSION.exe" \
+            "mJournal-$VERSION-portable.exe" \
+            "mjournal_${VERSION}_amd64.deb" \
+            "mJournal-$VERSION.AppImage" \
+            SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "mJournal $VERSION" \
+            --generate-notes \
+            "$flag"
+          echo "Made a $KIND for mJournal $VERSION: https://github.com/$GITHUB_REPOSITORY/releases"

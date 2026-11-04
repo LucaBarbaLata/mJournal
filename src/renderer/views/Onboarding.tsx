@@ -296,7 +296,11 @@ export function Onboarding() {
               title: 'Stays on this computer.',
               text: 'No account, no cloud, no tracking. mJournal only goes online to check for a new version.',
             },
-            { icon: 'info', title: 'Not encrypted by mJournal.', text: 'A password on your computer account keeps your journal safe.' },
+            {
+              icon: 'info',
+              title: 'Not encrypted by mJournal.',
+              text: 'A password on your computer account keeps your journal safe. You can add a PIN in Settings, too.',
+            },
             { icon: 'download', title: 'Back up now and then', text: 'in Settings → Backup & export, to a USB drive or another disk.' },
           ]}
         />

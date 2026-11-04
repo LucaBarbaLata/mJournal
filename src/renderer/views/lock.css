@@ -1,0 +1,119 @@
+/* ---------- Lock screen ---------- */
+/* A quiet sheet of paper with the logo and one field. Nothing of the journal is on this page. */
+.lock-screen {
+  position: relative;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--titlebar-height) + var(--s-5)) var(--s-5) var(--s-7);
+  background: var(--glow), var(--paper);
+  overflow: hidden;
+  animation: fade-in var(--dur-3) var(--ease);
+}
+.lock-titlebar {
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--titlebar-height);
+}
+
+.lock-card {
+  position: relative;
+  z-index: 1;
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-8) var(--s-7) var(--s-6);
+  text-align: center;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  animation: rise-in 420ms var(--ease) both;
+}
+.lock-card h1 {
+  margin-top: var(--s-1);
+  font-size: var(--text-2xl);
+}
+.lock-card > p {
+  margin: 0;
+}
+.lock-logo {
+  display: inline-flex;
+}
+
+.pin-input {
+  margin-top: var(--s-2);
+  height: 50px;
+  /* The spacing after the last dot is balanced by the indent, so the dots stay centred. */
+  padding-left: calc(12px + 0.45em);
+  text-align: center;
+  font-size: var(--text-xl);
+  letter-spacing: 0.45em;
+}
+.pin-input.shake {
+  animation: pin-shake 380ms var(--ease);
+}
+.lock-submit {
+  width: 100%;
+  justify-content: center;
+}
+.lock-message {
+  min-height: 1.5em;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--accent-text);
+}
+.lock-forgot {
+  max-width: 32ch;
+  margin-top: var(--s-2) !important;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.lock-deco {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.lock-deco-sprig {
+  left: 11%;
+  bottom: 13%;
+  animation: sway 7s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+.lock-deco-flower {
+  right: 15%;
+  top: 19%;
+  animation: float-soft 6s ease-in-out infinite;
+}
+.lock-deco-sparkles {
+  right: 10%;
+  bottom: 20%;
+}
+
+@keyframes pin-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-8px);
+  }
+  40% {
+    transform: translateX(7px);
+  }
+  60% {
+    transform: translateX(-5px);
+  }
+  80% {
+    transform: translateX(3px);
+  }
+}
+
+@media (max-height: 560px) {
+  .lock-deco {
+    display: none;
+  }
+}

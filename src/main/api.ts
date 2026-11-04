@@ -21,9 +21,11 @@ import {
   expectObject,
   expectOneOf,
   expectText,
+  UserFacingError,
   ValidationError,
 } from '@core/validation';
 import type { JournalHost } from './host';
+import type { AppLock } from './lock';
 import { writeBackup } from './services/backup';
 import { buildCsv, buildJsonExport } from './services/exporter';
 import { fileStamp, writeFileAtomic } from './services/fsutil';
@@ -93,7 +95,31 @@ export function parseSearchQuery(input: unknown): SearchQuery {
   };
 }
 
-export function createApi(host: JournalHost, platform: Platform): ApiHandlers {
+/** All that can be called while mJournal is locked: nothing that reads or changes the journal. */
+export const OPEN_WHILE_LOCKED: ReadonlySet<string> = new Set(['lock.status', 'lock.unlock', 'lock.lock']);
+
+type HandlerTable = Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>;
+
+/** Wraps every handler not in OPEN_WHILE_LOCKED so it refuses to run while mJournal is locked. */
+function guardWhileLocked(handlers: ApiHandlers, appLock: AppLock): ApiHandlers {
+  const guarded: HandlerTable = {};
+  for (const [namespace, methods] of Object.entries(handlers as unknown as HandlerTable)) {
+    guarded[namespace] = {};
+    for (const [method, handler] of Object.entries(methods)) {
+      guarded[namespace][method] = OPEN_WHILE_LOCKED.has(`${namespace}.${method}`)
+        ? handler
+        : async (...args: unknown[]) => {
+            if (appLock.isLocked()) throw new UserFacingError('locked', 'mJournal is locked.');
+            return handler(...args);
+          };
+    }
+  }
+  return guarded as unknown as ApiHandlers;
+}
+
+const MAX_PIN_INPUT = 64;
+
+export function createApi(host: JournalHost, platform: Platform, appLock: AppLock): ApiHandlers {
   const j = () => host.journal;
 
   /** Days up to tomorrow can be written (a little slack for clock and time-zone changes). */
@@ -115,7 +141,7 @@ export function createApi(host: JournalHost, platform: Platform): ApiHandlers {
     return { canceled: false, path: target, bytes: Buffer.byteLength(text) };
   };
 
-  return {
+  const handlers: ApiHandlers = {
     app: {
       info: async () => ({
         name: 'mJournal' as const,
@@ -353,5 +379,19 @@ export function createApi(host: JournalHost, platform: Platform): ApiHandlers {
       check: async () => platform.updates.check(),
       openReleasePage: async () => platform.openReleasePage(),
     },
+
+    lock: {
+      status: async () => appLock.status(),
+      unlock: async (pin) => appLock.unlock(expectText(pin, 'PIN', MAX_PIN_INPUT)),
+      lock: async () => appLock.lock(),
+      setPin: async (currentPin, newPin) =>
+        appLock.setPin(
+          currentPin === null ? null : expectText(currentPin, 'PIN', MAX_PIN_INPUT),
+          expectText(newPin, 'PIN', MAX_PIN_INPUT),
+        ),
+      removePin: async (currentPin) => appLock.removePin(expectText(currentPin, 'PIN', MAX_PIN_INPUT)),
+      setAutoLock: async (minutes) => appLock.setAutoLock(expectInteger(minutes, 0, 1440, 'time')),
+    },
   };
+  return guardWhileLocked(handlers, appLock);
 }

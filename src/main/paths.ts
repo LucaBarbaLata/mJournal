@@ -4,6 +4,8 @@ import { join } from 'node:path';
 export interface DataPaths {
   root: string;
   database: string;
+  /** The PIN lock (see lock.ts). Not part of backups. */
+  lock: string;
   photos: string;
   thumbnails: string;
   backups: string;
@@ -13,11 +15,13 @@ export interface DataPaths {
 }
 
 export const DATABASE_FILE = 'mjournal.db';
+export const LOCK_FILE = 'lock.json';
 
 export function dataPaths(root: string): DataPaths {
   return {
     root,
     database: join(root, DATABASE_FILE),
+    lock: join(root, LOCK_FILE),
     photos: join(root, 'photos'),
     thumbnails: join(root, 'thumbnails'),
     backups: join(root, 'backups'),

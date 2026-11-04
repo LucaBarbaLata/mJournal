@@ -436,3 +436,95 @@ test('can be used with the keyboard alone', async () => {
   await page.keyboard.press('Control+f');
   await expect(page.getByRole('searchbox', { name: 'Search your journal' })).toBeFocused();
 });
+
+test('keeps the journal behind a PIN, from Settings to the next start', async () => {
+  const dataDir = makeDataDir();
+  dirs.push(dataDir);
+  run = await launch(dataDir);
+  let { page } = run;
+  const today = localDateKey();
+  await callApi(page, 'entries', 'update', today, { body: 'A secret about the garden.' });
+  const images = makeDataDir();
+  dirs.push(images);
+  const photo = writeImage(images, 'garden.png', [120, 180, 90]);
+  const imported = await callApi<{ imported: { id: string }[] }>(page, 'photos', 'importFiles', today, [photo]);
+  const photoId = imported.imported[0].id;
+  const photoStatus = () => page.evaluate(async (id) => (await fetch(`mj-media://photo/${id}`)).status, photoId);
+  expect(await photoStatus()).toBe(200);
+
+  await page.keyboard.press('Control+,');
+  await page.locator('#settings-pin').getByRole('button', { name: 'Set a PIN…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Set a PIN' });
+  await dialog.getByLabel('New PIN', { exact: true }).fill('2468');
+  await dialog.getByLabel('New PIN again').fill('2486');
+  await dialog.getByRole('button', { name: 'Set PIN' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('aren’t the same');
+  await dialog.getByLabel('New PIN again').fill('2468');
+  await dialog.getByRole('button', { name: 'Set PIN' }).click();
+  await expect(page.locator('#settings-pin').getByRole('button', { name: 'Change PIN…' })).toBeVisible();
+  const lockFile = join(dataDir, 'lock.json');
+  expect(existsSync(lockFile)).toBe(true);
+  expect(readFileSync(lockFile, 'utf8')).not.toContain('2468');
+
+  // The next start asks for the PIN, and nothing of the journal can be reached until then.
+  await closeLikeUser(run.app);
+  run = await launch(dataDir, { locked: true });
+  page = run.page;
+  await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible();
+  await expect(page.locator('.app')).toHaveCount(0);
+  await expect(page.locator('body')).not.toContainText('garden');
+  const refused = await page.evaluate(async (date) => window.mjournalIpc!.entries.getDay(date), today);
+  expect(refused).toMatchObject({ ok: false, code: 'locked' });
+  expect(await photoStatus()).toBe(404);
+
+  const pin = page.getByLabel('PIN', { exact: true });
+  await pin.fill('1357');
+  await page.getByRole('button', { name: 'Unlock' }).click();
+  await expect(page.locator('#lock-message')).toContainText('not the right PIN');
+  await expect(pin).toHaveValue('');
+  await expect(pin).toBeFocused();
+  await pin.fill('2468');
+  await pin.press('Enter');
+  await expect(page.getByRole('textbox', { name: 'Free writing' })).toHaveValue('A secret about the garden.');
+  expect(await photoStatus()).toBe(200);
+});
+
+test('locks with Ctrl+L and after a while without use, saving first, and the PIN can be turned off', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page } = run;
+  // Set behind the interface's back: the main process tells the window, and the Lock button appears.
+  await callApi(page, 'lock', 'setPin', null, '1234');
+  await expect(page.locator('.sidebar').getByRole('button', { name: 'Lock' })).toBeVisible();
+
+  // Words typed just before locking are saved, not lost.
+  await page.getByRole('textbox', { name: 'Free writing' }).fill('Typed right before locking.');
+  await page.keyboard.press('Control+l');
+  await expect(page.locator('.lock-screen')).toBeVisible();
+  await page.getByLabel('PIN', { exact: true }).fill('1234');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('textbox', { name: 'Free writing' })).toHaveValue('Typed right before locking.');
+
+  // After a minute without input it locks by itself.
+  await page.clock.install();
+  await page.keyboard.press('Control+,');
+  const autoLock = page.locator('#settings-pin select');
+  await autoLock.selectOption('1');
+  await expect(autoLock).toHaveValue('1');
+  await page.clock.fastForward('01:10');
+  await expect(page.locator('.lock-screen')).toBeVisible();
+
+  await page.getByLabel('PIN', { exact: true }).fill('1234');
+  await page.keyboard.press('Enter');
+  const section = page.locator('#settings-pin');
+  await section.getByRole('button', { name: 'Turn off PIN…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Turn off the PIN' });
+  await dialog.getByLabel('Current PIN').fill('0000');
+  await dialog.getByRole('button', { name: 'Turn off' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('not your current PIN');
+  await dialog.getByLabel('Current PIN').fill('1234');
+  await dialog.getByRole('button', { name: 'Turn off' }).click();
+  await expect(section.getByRole('button', { name: 'Set a PIN…' })).toBeVisible();
+  await expect(page.locator('.sidebar').getByRole('button', { name: 'Lock' })).toHaveCount(0);
+  expect(existsSync(join(run.dataDir, 'lock.json'))).toBe(false);
+});

@@ -7,6 +7,7 @@
  * compile-time check below keeps it in sync with the MJournalApi interface.
  */
 import type { DateFormatPreference, DateKey, MonthKey, WeekStart } from './dates';
+import type { LockStatus } from './lock';
 import type { MoodColor, MoodIcon } from './moods';
 import type { PromptCategory } from './prompts';
 import type { StreakSummary } from './streaks';
@@ -381,6 +382,17 @@ export interface MJournalApi {
     /** Opens the releases page on GitHub in the browser. Nothing is downloaded by mJournal itself. */
     openReleasePage(): Promise<void>;
   };
+  /** The optional PIN lock. Only status, unlock and lock can be called while locked. */
+  lock: {
+    status(): Promise<LockStatus>;
+    /** Unlocks with the right PIN. A wrong one leaves it locked; the status says when the next try is allowed. */
+    unlock(pin: string): Promise<LockStatus>;
+    lock(): Promise<LockStatus>;
+    /** Turns the PIN on (currentPin null) or changes it (currentPin needed). */
+    setPin(currentPin: string | null, newPin: string): Promise<LockStatus>;
+    removePin(currentPin: string): Promise<LockStatus>;
+    setAutoLock(minutes: number): Promise<LockStatus>;
+  };
 }
 
 /** Helpers that live only in the preload script (no IPC round trip). */
@@ -393,6 +405,10 @@ export interface NativeBridge {
   onNavigate(callback: (hash: string) => void): () => void;
   /** Called whenever the update check's status changes. */
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
+  /** Called when the main process wants to lock (the computer goes to sleep): save edits, then lock. */
+  onLockRequest(callback: () => Promise<void> | void): () => void;
+  /** Called whenever the lock changes, e.g. when the main process had to lock by itself. */
+  onLockChanged(callback: (status: LockStatus) => void): () => void;
 }
 
 type MethodNames<T> = { [K in keyof T]: readonly (keyof T[K] & string)[] };
@@ -443,6 +459,7 @@ export const API_METHODS = {
     'showSavedFile',
   ],
   updates: ['status', 'check', 'openReleasePage'],
+  lock: ['status', 'unlock', 'lock', 'setPin', 'removePin', 'setAutoLock'],
 } as const satisfies MethodNames<MJournalApi>;
 
 // Compile-time check that every method of MJournalApi is listed above.
@@ -467,4 +484,6 @@ export const EVENTS = {
   flushDone: 'mj-event:flush-done',
   navigate: 'mj-event:navigate',
   updateStatus: 'mj-event:update-status',
+  lockRequest: 'mj-event:lock-request',
+  lockChanged: 'mj-event:lock-changed',
 } as const;

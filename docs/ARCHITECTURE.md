@@ -11,7 +11,8 @@ mJournal is a desktop **Electron** app with a **React + TypeScript** interface a
   Chromium, so it renders the same on every machine and works offline.
 - **Real local storage without a server.** The main process reads and writes the SQLite file and photo folder
   directly. There is no local web server and no open port; the interface talks to the main process over IPC only.
-- **One-click distribution.** `electron-builder` produces a per-user installer and a portable `.exe`.
+- **One-click distribution.** `electron-builder` produces a per-user installer and a portable `.exe` for Windows,
+  and a `.deb` and an AppImage for Linux.
 - **Testable end to end.** Playwright can drive the real app, so the important flows are tested as a user would use
   them.
 - **No compiled add-ons.** SQLite comes from Node’s built-in `node:sqlite` (present in Electron 44’s Node 24), so
@@ -76,6 +77,8 @@ All tables are SQLite `STRICT` tables. The schema version is `PRAGMA user_versio
 | `moods` | The mood vocabulary: label, icon, color, order, hidden, built-in. Moods are hidden, never deleted. |
 | `monthly_reflections` | Answers to the monthly questions and the “Dear me” letter, per month. |
 | `settings` | JSON values per key, re-validated on read (malformed values fall back to defaults). Keys starting with `internal.` hold things like the window size. |
+
+The PIN lock is deliberately **not** in the database: it lives in `lock.json` next to it (see *The PIN lock* below).
 | `search_index` | FTS5 table (`body`, `answers`, `notes`), rowid = the day number of the date. |
 
 ### Migrations
@@ -148,7 +151,30 @@ SQLite runs in WAL mode with `synchronous = FULL`, so a committed save survives 
   integrity and loading only from the asar.
 - Logs never contain journal content. There is no telemetry. The only network request is the update check (below);
   the interface itself can’t reach the network at all (its content-security policy allows no remote origins).
+- Optional PIN lock (below). It keeps mJournal's window closed; it is not encryption.
 - Not done: encryption at rest. Protecting the journal relies on the operating system account and disk encryption.
+
+### The PIN lock
+
+The lock keeps other people who use the computer out of mJournal. It does not protect the files themselves.
+
+- **Where it lives.** `main/lock.ts` (`AppLock`, Electron-free and unit-tested) keeps the PIN only as a scrypt hash
+  (N = 2¹⁵, r = 8, p = 1, random 16-byte salt) in `lock.json` in the data folder, written atomically. It is outside the
+  database on purpose: backups don't contain it and a restore never changes it. Deleting the file while mJournal is
+  closed removes the PIN; that's the documented way back from a forgotten one. A file that can't be read (or has
+  out-of-range scrypt parameters) counts as no PIN, which is what deleting it would do anyway.
+- **Enforced by the main process.** With a PIN, mJournal starts locked. `createApi` wraps every handler except
+  `lock.status`, `lock.unlock` and `lock.lock` (`OPEN_WHILE_LOCKED`) so it fails with `locked`, and `mj-media://`
+  answers 404. The interface can't read the journal while locked, whatever it does.
+- **Wrong PINs.** Five are free, then pauses of 30 s, 1 min, 5 min and 15 min from then on (`core/lock.ts`). The count
+  and the end of the pause are saved in `lock.json`, so a restart doesn't reset them. Checks run one at a time, so
+  tries sent in parallel can't get past a pause. Tries during a pause aren't checked at all.
+- **In the interface.** `renderer/lib/lock.tsx` (`LockProvider`) sits above `AppProvider`. While locked it renders
+  only `views/LockScreen.tsx`, so no journal data is loaded or kept in React state. Locking always saves pending
+  edits first (`saveQueue.flush()`). It locks from *Lock*/*Ctrl+L*, after the chosen minutes without input (keys,
+  pointer, wheel), and when the main process sends `lock-request` on system `suspend` or `lock-screen`. If the
+  window doesn't lock within 3 seconds, the main process locks on its own and sends `lock-changed`. The
+  save-before-close listener lives in `App`, above the lock, so closing a locked window doesn't wait.
 
 ### The update check
 
@@ -161,15 +187,34 @@ anything; *Get it* opens the fixed releases-page address with `shell.openExterna
 answer. Development builds don’t check automatically; end-to-end tests point `MJOURNAL_UPDATE_URL` at a local server
 (only honoured when the app isn’t packaged).
 
+## Linux
+
+Most of mJournal doesn’t care which system it runs on; the differences are kept in `main/index.ts` and `main/window.ts`.
+
+- **Folders.** The journal lives in `~/.config/mJournal` (Electron’s `appData`), the browser engine’s caches in
+  `$XDG_CACHE_HOME/mJournal/Chromium` (usually `~/.cache`). A `mJournal Data` folder next to the AppImage (found
+  through the `APPIMAGE` variable its runtime sets) works like the one next to the portable `.exe`.
+- **Packages.** A `.deb` and an AppImage, x64 only. `desktopName` in `package.json` together with
+  `linux.syncDesktopName` makes the window, the menu entry (`mjournal.desktop`) and the dock icon belong together.
+- **Chromium’s sandbox.** Ubuntu 24.04 and systems based on it only allow the kernel feature the sandbox needs for
+  programs with an AppArmor profile. The `.deb` installs one (electron-builder’s after-install script). The AppImage
+  can’t, so its runtime (toolset `1.0.3`) starts the app with `--no-sandbox` only on such systems; the older runtime
+  did so everywhere. The README recommends the `.deb` for that reason.
+- **No keyring.** mJournal stores no cookies or passwords, so it starts Chromium with `--password-store=basic`, which
+  avoids a keyring password prompt on some desktops.
+- **No spell checking.** Chromium on Linux has no system spell checker to use and would download Hunspell
+  dictionaries from Google, so `spellcheck` is off there (and the download address points nowhere, just in case).
+
 ## Releases
 
 `.github/workflows/release.yml` is started by hand (*Run workflow*) with a choice of draft, pre-release or release.
 A short `check` job (Linux) looks at the Releases page first: it stops if the version in `package.json` is already
 released, and with *release* it turns an existing pre-release of that version into the release (`gh release edit`)
-instead of rebuilding, provided nothing outside `.github/`, `docs/` and Markdown changed since its tag. Otherwise the
-`release` job, on a Windows runner, runs `npm ci` and
-`npm run verify`, builds with `npm run dist`, writes `SHA256SUMS.txt` and creates the release `v<version>` at the built
-commit with `gh release create` (replacing an earlier draft of the same version). There is deliberately no tag
+instead of rebuilding, provided nothing outside `.github/`, `docs/` and Markdown changed since its tag. Otherwise two build jobs run side by side: `windows` runs `npm ci`, `npm run verify` and `npm run dist`;
+`linux` (Ubuntu 24.04) runs the same tests under `xvfb-run` and builds with `npm run dist:linux`. electron-builder can’t
+make Linux packages on Windows, hence the second runner. Only if both succeed does `publish` collect their files, write
+`SHA256SUMS.txt` and create the release `v<version>` at the built commit with `gh release create` (replacing an earlier
+draft of the same version). There is deliberately no tag
 trigger: publishing a draft creates its tag, which would otherwise start a second run. The update check reads GitHub’s
 “latest release”, which never includes drafts or pre-releases. electron-builder itself never publishes
 (`publish: null`), so no auto-update metadata is produced.
@@ -185,14 +230,17 @@ to the executable together with `LICENSE`; `tests/unit/notices.test.ts` fails wh
   JSON and CSV export (including formula escaping); migrations (upgrade, rollback, newer version, unreadable file);
   backup and restore (round trip, cancel, corrupted, truncated, path traversal, absolute paths, links, unexpected
   files, tampered manifest, database or photos); API validation; version comparison and update-check scheduling (with
-  fake timers); third-party notices being up to date.
+  fake timers); the PIN lock (hashing, pauses across restarts, tries sent in parallel, a damaged lock file, restoring a
+  backup) and every API method refusing to run while locked; third-party notices being up to date.
 - `tests/e2e` (Playwright driving the built app with a temporary `MJOURNAL_DATA_DIR`): clean start; writing, closing
   the window and reopening; editing earlier days; calendar navigation; photos with duplicate names and thumbnails;
   missing photo files; search and filters; monthly reflection persistence; JSON and CSV export; backup and confirmed
   restore; corrupted backup; theme switching; the welcome guide (with animations on, and in the smallest window);
-  one-time tips; the update note (against a local stand-in for GitHub); keyboard-only use. Native dialogs and
+  one-time tips; the update note (against a local stand-in for GitHub); keyboard-only use; the PIN lock (set in
+  Settings, the next start locked with journal requests and photos refused, wrong PIN, Ctrl+L saving first, locking
+  after a minute without input with Playwright's fake clock, turning it off). Native dialogs and
   `shell.openExternal` are stubbed in the main process. The other tests run with reduced motion and skip the guide.
-  On GitHub Actions each end-to-end test gets one retry.
+  On GitHub Actions each end-to-end test gets one retry, and the whole suite runs on both Windows and Linux.
 
 ## How-tos
 

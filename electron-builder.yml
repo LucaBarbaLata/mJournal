@@ -1,6 +1,10 @@
-# Packaging for mJournal (npm run dist). Produces, in ./release:
-#   mJournal-Setup-<version>.exe     installer with Start menu and desktop shortcuts (no admin needed)
-#   mJournal-<version>-portable.exe  runs without installing
+# Packaging for mJournal. Produces, in ./release:
+#   npm run dist (on Windows)
+#     mJournal-Setup-<version>.exe     installer with Start menu and desktop shortcuts (no admin needed)
+#     mJournal-<version>-portable.exe  runs without installing
+#   npm run dist:linux (on Linux; electron-builder can't make these on Windows)
+#     mjournal_<version>_amd64.deb     installs into the app menu (Ubuntu, Zorin OS, Mint, Debian…)
+#     mJournal-<version>.AppImage      one file that runs on most distributions
 appId: app.mjournal
 productName: mJournal
 copyright: Copyright © 2026 lucariki
@@ -57,4 +61,24 @@ mac:
 linux:
   icon: build/icon.png
   category: Utility
-  target: [AppImage]
+  synopsis: A private journal for gratitude, reflection and everyday memories
+  maintainer: lucariki
+  executableName: mjournal
+  # The window, the app menu entry and the dock icon belong together (desktopName in package.json).
+  syncDesktopName: true
+  desktop:
+    entry:
+      Keywords: journal;diary;gratitude;mood;memories;
+  target:
+    - target: deb
+      arch: [x64]
+    - target: AppImage
+      arch: [x64]
+deb:
+  artifactName: mjournal_${version}_amd64.${ext}
+appImage:
+  artifactName: mJournal-${version}.${ext}
+toolsets:
+  # The newer AppImage runtime. It doesn't need libfuse2 (missing on recent Ubuntu-based systems), and it
+  # only turns Chromium's sandbox off where the system blocks it, instead of always (the old runtime's default).
+  appimage: 1.0.3

@@ -11,7 +11,16 @@ import { toast } from '../../components/Toasts';
 import { SettingsSection } from '../SettingsView';
 import { formatBytes } from './BackupSettings';
 
+/** How to turn on disk encryption, in the words of the operating system mJournal runs on. */
+function diskEncryptionHint(platform: string): string {
+  if (platform === 'win32') return 'BitLocker or “Device encryption” in Windows settings';
+  if (platform === 'linux') return 'on Linux, full-disk encryption is usually set up while installing the system';
+  if (platform === 'darwin') return 'FileVault in System Settings';
+  return 'see your system’s settings';
+}
+
 export function DataSettings() {
+  const { info: app } = useApp();
   const info = useQuery('data-info', () => api.data.info(), ['data', 'entries', 'photos']);
   const data = info.data;
   return (
@@ -57,8 +66,9 @@ export function DataSettings() {
             <h3>Not encrypted by mJournal</h3>
             <p className="muted">
               Your journal is stored as ordinary files in your user folder. Anyone who can sign in to your computer account could
-              open them. To protect it, use a password on your account and turn on device encryption (BitLocker or “Device
-              encryption” in Windows settings). Backups aren’t encrypted either — keep them somewhere private.
+              open them. To protect it, use a password on your account and turn on device encryption ({diskEncryptionHint(app.platform)}).
+              A PIN (Settings → PIN lock) keeps mJournal itself closed, but doesn’t encrypt the files. Backups aren’t
+              encrypted either — keep them somewhere private.
             </p>
           </div>
         </li>

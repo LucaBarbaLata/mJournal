@@ -3,14 +3,16 @@
  *
  * Where data lives:
  * - Journal (database, photos, backups): %APPDATA%\mJournal on Windows,
- *   or the folder in MJOURNAL_DATA_DIR, or "mJournal Data" next to a
- *   portable mJournal.exe if that folder exists.
- * - Browser engine caches: %LOCALAPPDATA%\mJournal\Chromium (no journal content).
+ *   ~/.config/mJournal on Linux, or the folder in MJOURNAL_DATA_DIR, or
+ *   "mJournal Data" next to a portable mJournal.exe or the AppImage if that
+ *   folder exists.
+ * - Browser engine caches: %LOCALAPPDATA%\mJournal\Chromium on Windows,
+ *   ~/.cache/mJournal/Chromium on Linux (no journal content).
  * Development builds use "mJournal-dev" so they never touch a real journal.
  */
-import { app, BrowserWindow, dialog, Menu, nativeTheme, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, nativeTheme, powerMonitor, session, shell } from 'electron';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { EVENTS } from '@core/api';
 import { todayKey } from '@core/dates';
 import { LATEST_RELEASE_API } from '@core/updates';
@@ -18,6 +20,7 @@ import { UserFacingError } from '@core/validation';
 import icon from '../../resources/icon.png?asset';
 import { createApi } from './api';
 import { JournalHost } from './host';
+import { AppLock } from './lock';
 import { registerIpc } from './ipc';
 import { log, setLogFile } from './log';
 import { dataPaths } from './paths';
@@ -31,9 +34,27 @@ import { createMainWindow, type WindowState } from './window';
 
 registerSchemes();
 
+/** "mJournal Data" next to the portable mJournal.exe or the AppImage (used only if the user created it). */
+function portableDataDir(): string | null {
+  const beside =
+    process.env.PORTABLE_EXECUTABLE_DIR ??
+    (process.platform === 'linux' && process.env.APPIMAGE ? dirname(process.env.APPIMAGE) : undefined);
+  return beside ? join(beside, 'mJournal Data') : null;
+}
+
+/** Where the browser engine's caches go: %LOCALAPPDATA% on Windows, the XDG cache folder (~/.cache) on Linux. */
+function engineCacheRoot(): string {
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) return process.env.LOCALAPPDATA;
+  if (process.platform === 'linux') {
+    const xdg = process.env.XDG_CACHE_HOME;
+    return xdg && isAbsolute(xdg) ? xdg : join(app.getPath('home'), '.cache');
+  }
+  return app.getPath('appData');
+}
+
 function configurePaths(): string {
   const override = process.env.MJOURNAL_DATA_DIR;
-  const portableDir = process.env.PORTABLE_EXECUTABLE_DIR ? join(process.env.PORTABLE_EXECUTABLE_DIR, 'mJournal Data') : null;
+  const portableDir = portableDataDir();
   let journalDir: string;
   let engineDir: string;
   if (override) {
@@ -45,8 +66,7 @@ function configurePaths(): string {
   } else {
     const name = app.isPackaged ? 'mJournal' : 'mJournal-dev';
     journalDir = join(app.getPath('appData'), name);
-    const local = process.platform === 'win32' && process.env.LOCALAPPDATA ? process.env.LOCALAPPDATA : app.getPath('appData');
-    engineDir = join(local, name, 'Chromium');
+    engineDir = join(engineCacheRoot(), name, 'Chromium');
   }
   app.setPath('userData', engineDir);
   app.setPath('sessionData', engineDir);
@@ -81,6 +101,9 @@ async function fetchLatestRelease(): Promise<unknown> {
 }
 
 if (process.platform === 'win32') app.setAppUserModelId('app.mjournal');
+// mJournal keeps no cookies or saved passwords, so Chromium has nothing to put in the Linux keyring.
+// Without this it may ask for the keyring password at start-up on some desktops.
+if (process.platform === 'linux') app.commandLine.appendSwitch('password-store', 'basic');
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -91,6 +114,20 @@ if (!app.requestSingleInstanceLock()) {
     dialog.showErrorBox('mJournal', `mJournal could not start.\n\n${(err as Error).message}`);
     app.quit();
   });
+}
+
+/** How long the window gets to save pending edits before mJournal locks anyway. */
+const LOCK_REQUEST_TIMEOUT_MS = 3000;
+
+/**
+ * Locks when the computer goes to sleep or its screen locks. The window is asked
+ * first, so it can save what's being typed and then lock itself; if it doesn't
+ * within a few seconds, the main process locks on its own.
+ */
+function requestLock(appLock: AppLock): void {
+  if (!appLock.status().enabled || appLock.isLocked()) return;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(EVENTS.lockRequest);
+  setTimeout(() => appLock.lock(), LOCK_REQUEST_TIMEOUT_MS);
 }
 
 function focusWindow(): void {
@@ -105,7 +142,9 @@ function hardenSessions(): void {
   // mJournal never needs the camera, microphone, location, notifications prompts and so on.
   ses.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'clipboard-sanitized-write'));
   ses.setPermissionCheckHandler((_wc, permission) => permission === 'clipboard-sanitized-write');
-  // Keep the spell checker offline: on Windows and macOS it uses the system dictionary.
+  // Keep the spell checker offline: on Windows and macOS it uses the system dictionary. On Linux
+  // Chromium would download dictionaries from Google, so spell checking is off there (window.ts);
+  // this is a second line of defence in case it is ever switched on.
   if (process.platform === 'linux') ses.setSpellCheckerDictionaryDownloadURL('http://127.0.0.1:9/');
 }
 
@@ -179,8 +218,17 @@ async function start(): Promise<void> {
   }
   const journalHost = host;
 
+  // With a PIN, mJournal starts locked. While locked, the API refuses everything but unlocking (api.ts)
+  // and no photo is served.
+  const appLock = AppLock.load(dataPaths(journalDir).lock);
+  appLock.subscribe((status) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(EVENTS.lockChanged, status);
+  });
+  powerMonitor.on('suspend', () => requestLock(appLock));
+  powerMonitor.on('lock-screen', () => requestLock(appLock));
+
   handleAppProtocol(join(__dirname, '../renderer'));
-  handleMediaProtocol((kind, id) => journalHost.journal.photos.mediaPath(kind, id));
+  handleMediaProtocol((kind, id) => (appLock.isLocked() ? null : journalHost.journal.photos.mediaPath(kind, id)));
 
   reminder = new Reminder(
     () => journalHost.journal.entries.contentDays().includes(todayKey()),
@@ -212,7 +260,7 @@ async function start(): Promise<void> {
     },
     updateChecker,
   );
-  registerIpc(createApi(journalHost, platform), isTrustedUrl);
+  registerIpc(createApi(journalHost, platform, appLock), isTrustedUrl);
 
   const settings = journalHost.journal.settings.get();
   applyTheme(settings.theme);

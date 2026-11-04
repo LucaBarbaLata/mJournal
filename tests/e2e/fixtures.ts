@@ -28,6 +28,8 @@ export interface LaunchOptions {
   motion?: 'reduce' | 'no-preference';
   /** Extra environment variables, e.g. MJOURNAL_UPDATE_URL. */
   env?: Record<string, string>;
+  /** The journal has a PIN: wait for the lock screen instead of the app (and leave the guide alone). */
+  locked?: boolean;
 }
 
 export async function launch(dataDir = makeDataDir(), options: LaunchOptions = {}): Promise<Launched> {
@@ -46,6 +48,10 @@ export async function launch(dataDir = makeDataDir(), options: LaunchOptions = {
   });
   // Let the app's own theme setting drive prefers-color-scheme.
   await page.emulateMedia({ colorScheme: null, reducedMotion: options.motion ?? 'reduce' });
+  if (options.locked) {
+    await page.waitForSelector('.lock-screen');
+    return { app, page, dataDir, errors };
+  }
   await page.waitForSelector('.app');
   if ((options.guide ?? 'skip') === 'skip') {
     const settings = await callApi<{ onboardingDone: boolean }>(page, 'settings', 'get');

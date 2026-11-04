@@ -49,4 +49,16 @@ contextBridge.exposeInMainWorld('mjournalNative', {
     ipcRenderer.on(EVENTS.updateStatus, listener);
     return () => ipcRenderer.removeListener(EVENTS.updateStatus, listener);
   },
+  onLockRequest(callback: () => Promise<void> | void): () => void {
+    const listener = () => void callback();
+    ipcRenderer.on(EVENTS.lockRequest, listener);
+    return () => ipcRenderer.removeListener(EVENTS.lockRequest, listener);
+  },
+  onLockChanged(callback: (status: unknown) => void): () => void {
+    const listener = (_event: Electron.IpcRendererEvent, status: unknown) => {
+      if (typeof status === 'object' && status !== null) callback(status);
+    };
+    ipcRenderer.on(EVENTS.lockChanged, listener);
+    return () => ipcRenderer.removeListener(EVENTS.lockChanged, listener);
+  },
 });
