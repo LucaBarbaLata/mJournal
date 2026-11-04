@@ -1,0 +1,71 @@
+name: Something doesn't work
+description: Report a bug in mJournal.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time! Please **don't paste anything private** from your journal (entries, moods, photos):
+        describe the problem in your own words instead. For a security problem, use
+        [private reporting](https://github.com/LucaBarbaLata/mJournal/security/advisories/new) instead of this form.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: And what did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can it be reproduced?
+      placeholder: |
+        1. Open Calendar
+        2. Click …
+        3. …
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: mJournal version
+      description: Shown at the bottom of Settings → Shortcuts & about.
+      placeholder: e.g. 1.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: Which download do you use?
+      options:
+        - Windows installer (mJournal-Setup)
+        - Windows portable (.exe)
+        - Linux .deb
+        - Linux AppImage
+        - Built it myself
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: e.g. Windows 11, Zorin OS 18, Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log (optional, but very helpful)
+      description: |
+        mJournal writes technical errors (never journal content) to `logs/mjournal.log` in the data folder
+        (Settings → Data & privacy → Open data folder). On Windows that's `%APPDATA%\mJournal\logs\mjournal.log`,
+        on Linux `~/.config/mJournal/logs/mjournal.log`. Paste the last lines from around the time it happened.
+      render: text
+    validations:
+      required: false

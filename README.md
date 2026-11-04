@@ -181,6 +181,8 @@ All of these live in **Settings → Backup & export**.
   Electron’s security switches prevent it from being run as a plain Node.js program, from being debugged via command
   line flags, and from loading code other than its own verified package.
 
+Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
+
 ## How mJournal counts things
 
 - A day counts as **journaled** when anything was saved for it: a mood, energy, some words or a photo.
@@ -227,6 +229,10 @@ All of these live in **Settings → Backup & export**.
 | `npm run icons` | Re-renders `build\icon.ico` and the PNG icons from `build\icon.svg` |
 | `npm run notices` | Rewrites `THIRD-PARTY-NOTICES.txt` after dependencies change (a unit test reminds you) |
 | `npm run verify` | Type-check, unit tests and end-to-end tests in one go |
+
+On GitHub, the *Tests* workflow ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs `npm run verify` on Windows
+and on Linux after every push to `main` and for every pull request. Dependabot proposes dependency updates every week
+as pull requests, which the same workflow tests.
 
 ### Releasing a version
 
@@ -284,7 +290,7 @@ src/
 tests/unit/    Vitest tests          tests/e2e/   Playwright tests of the real app
 build/         Icon sources and packaging resources
 scripts/       Icon rendering, third-party notices and the Node.js downloads used by Build mJournal.cmd and build-mjournal.sh
-.github/       The release workflow
+.github/       The release and test workflows, Dependabot settings and the bug report form
 ```
 
 ## Known limitations
@@ -294,8 +300,8 @@ scripts/       Icon rendering, third-party notices and the Node.js downloads use
 - One entry per day (with any number of prompts and photos).
 - HEIC/HEIF photos aren’t supported.
 - The evening reminder needs mJournal to be running.
-- Built and tested on Windows 11. Linux packages (64-bit Intel/AMD only) are new in 1.1 and are tested automatically on
-  Ubuntu 24.04. macOS packaging is configured but hasn’t been tested.
+- Built and tested on Windows 11. Linux packages (64-bit Intel/AMD only) are new in 1.1; they are tested automatically on
+  Ubuntu 24.04 and were tried by hand on Zorin OS. macOS packaging is configured but hasn’t been tested.
 - Spell checking isn’t available on Linux.
 - The app isn’t code-signed, so Windows shows a SmartScreen warning the first time.
 - Updates are installed by hand: mJournal tells you about a new version but doesn’t download it.

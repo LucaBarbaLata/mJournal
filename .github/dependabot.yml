@@ -1,0 +1,24 @@
+# Dependabot opens pull requests when dependencies have new versions; the Tests workflow checks each one.
+# Electron matters most: only its three newest major versions get security fixes.
+# Minor and patch updates come grouped (Electron on its own, everything else together); a new major
+# version comes as its own pull request, because it may need changes.
+# If a pull request fails only the THIRD-PARTY-NOTICES test, check it out, run `npm run notices` and push.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      electron:
+        patterns: [electron]
+        update-types: [minor, patch]
+      dependencies:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

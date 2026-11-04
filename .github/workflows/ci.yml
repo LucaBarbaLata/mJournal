@@ -1,0 +1,63 @@
+# Type-checks and tests mJournal on Windows and on Linux after every push to main and for every pull
+# request (including Dependabot's), so a problem shows up right away instead of when releasing.
+# It builds nothing to download: release.yml does that.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md']
+  pull_request:
+    paths-ignore: ['docs/**', '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: Linux
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # The electron package has no install script; this fetches its runtime for the tests.
+      - name: Download the Electron runtime
+        run: node node_modules/electron/install.js
+
+      - name: Type-check and test (unit and end-to-end)
+        if: runner.os == 'Windows'
+        run: npm run verify
+
+      # Same as in release.yml: let the test copy of Electron use its sandbox, and give the app
+      # a virtual screen.
+      - name: Let the test copy of Electron use its sandbox
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Type-check and test (unit and end-to-end)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run verify

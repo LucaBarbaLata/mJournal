@@ -62,7 +62,7 @@ linux:
   icon: build/icon.png
   category: Utility
   synopsis: A private journal for gratitude, reflection and everyday memories
-  maintainer: lucariki
+  maintainer: lucariki <luca@lucariki.top>
   executableName: mjournal
   # The window, the app menu entry and the dock icon belong together (desktopName in package.json).
   syncDesktopName: true

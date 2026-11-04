@@ -32,6 +32,12 @@ import { maybeTakeDailySnapshot } from './services/snapshots';
 import { UpdateChecker } from './services/updates';
 import { createMainWindow, type WindowState } from './window';
 
+// Errors nothing else caught go to the log, so a bug report can include them. The monitor only
+// watches: Electron still shows its error dialog for an uncaught exception, as before.
+process.on('uncaughtExceptionMonitor', (err) => log.error('Uncaught exception', err));
+// A forgotten rejected promise is logged instead of interrupting the person with an error dialog.
+process.on('unhandledRejection', (reason) => log.error('Unhandled promise rejection', reason));
+
 registerSchemes();
 
 /** "mJournal Data" next to the portable mJournal.exe or the AppImage (used only if the user created it). */
