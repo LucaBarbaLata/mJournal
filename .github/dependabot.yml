@@ -10,7 +10,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # @types/node has to match the Node.js inside Electron (process.versions.node), not the newest
+      # Node.js. Raise its major version by hand when an Electron update brings a new Node.js.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
     groups:
+      # These only work together (each new major of Vite needs matching electron-vite and React plugin
+      # versions), so they always come in one pull request, major versions included.
+      vite:
+        patterns: [vite, '@vitejs/*', electron-vite]
       electron:
         patterns: [electron]
         update-types: [minor, patch]
