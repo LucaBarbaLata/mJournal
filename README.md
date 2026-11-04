@@ -210,8 +210,10 @@ fetch one.
 
 [.github/workflows/release.yml](.github/workflows/release.yml) type-checks and tests everything, builds the installer
 and the portable app on Windows and puts them on the Releases page with a `SHA256SUMS.txt`. The `v1.0.0`-style tag is
-created when the release is published. Running it again for the same version replaces a draft; a version that is
-already published stops right away and asks you to raise the version. The repository has to be public for people to
+created when the release is published. Running it again for the same version replaces a draft. Running it with
+**release** while that version is a pre-release turns the pre-release into the release, without building again, as
+long as the app hasn’t changed since (edits to `.github/`, `docs/` and Markdown files don’t count). A version that is
+already released stops right away and asks you to raise the version. The repository has to be public for people to
 download releases and for the update check to see them.
 
 ### Stack

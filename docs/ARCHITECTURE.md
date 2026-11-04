@@ -164,7 +164,10 @@ answer. Development builds don’t check automatically; end-to-end tests point `
 ## Releases
 
 `.github/workflows/release.yml` is started by hand (*Run workflow*) with a choice of draft, pre-release or release.
-On a Windows runner it first stops if the version in `package.json` is already published, then runs `npm ci` and
+A short `check` job (Linux) looks at the Releases page first: it stops if the version in `package.json` is already
+released, and with *release* it turns an existing pre-release of that version into the release (`gh release edit`)
+instead of rebuilding, provided nothing outside `.github/`, `docs/` and Markdown changed since its tag. Otherwise the
+`release` job, on a Windows runner, runs `npm ci` and
 `npm run verify`, builds with `npm run dist`, writes `SHA256SUMS.txt` and creates the release `v<version>` at the built
 commit with `gh release create` (replacing an earlier draft of the same version). There is deliberately no tag
 trigger: publishing a draft creates its tag, which would otherwise start a second run. The update check reads GitHub’s
