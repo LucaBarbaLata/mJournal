@@ -38,7 +38,7 @@
     "@fontsource-variable/caveat": "5.3.0",
     "@fontsource-variable/fraunces": "5.3.0",
     "@fontsource-variable/nunito": "5.3.0",
-    "@playwright/test": "1.64.0",
+    "@playwright/test": "1.64.1",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
@@ -46,12 +46,12 @@
     "@types/yazl": "3.3.1",
     "@vitejs/plugin-react": "6.1.2",
     "electron": "45.2.1",
-    "electron-builder": "26.17.0",
+    "electron-builder": "26.18.0",
     "electron-vite": "6.0.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "typescript": "7.0.2",
     "vite": "8.3.5",
-    "vitest": "5.0.3"
+    "vitest": "5.0.5"
   }
 }
