@@ -14,7 +14,15 @@ function setup(overrides: Partial<Platform> = {}) {
   const revealed: string[] = [];
   const changed: Settings[] = [];
   const opened: string[] = [];
-  const upToDate: UpdateStatus = { state: 'up-to-date', current: '1.0.0', latest: null, checkedAt: '2026-10-24T18:00:00.000Z' };
+  const upToDate: UpdateStatus = {
+    state: 'up-to-date',
+    current: '1.0.0',
+    latest: null,
+    checkedAt: '2026-10-24T18:00:00.000Z',
+    installer: null,
+    progress: null,
+    installError: null,
+  };
   const platform: Platform = {
     appVersion: '1.0.0-test',
     platformName: 'test',
@@ -25,7 +33,7 @@ function setup(overrides: Partial<Platform> = {}) {
     showItemInFolder: (p) => revealed.push(p),
     openFolder: async () => undefined,
     settingsChanged: (s) => changed.push(s),
-    updates: { status: () => upToDate, check: async () => upToDate },
+    updates: { status: () => upToDate, check: async () => upToDate, install: async () => upToDate },
     openReleasePage: async () => void opened.push('releases'),
     ...overrides,
   };
@@ -127,10 +135,11 @@ describe('API handlers', () => {
     expect(existsSync(info.databasePath)).toBe(true);
   });
 
-  it('passes update checks to the platform, which only ever opens the releases page', async () => {
+  it('passes update checks and installs to the platform, and opens only the releases page', async () => {
     const { api, opened } = setup();
     expect((await api.updates.status()).state).toBe('up-to-date');
     expect((await api.updates.check()).state).toBe('up-to-date');
+    expect((await api.updates.install()).state).toBe('up-to-date');
     await api.updates.openReleasePage();
     expect(opened).toEqual(['releases']);
   });

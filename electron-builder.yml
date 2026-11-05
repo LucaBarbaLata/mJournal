@@ -21,8 +21,10 @@ extraFiles:
     to: LICENSE.txt
   - from: THIRD-PARTY-NOTICES.txt
     to: THIRD-PARTY-NOTICES.txt
-# No auto-updater (and no update metadata): mJournal only tells you when GitHub
-# has a newer version. Releases are published by .github/workflows/release.yml.
+# No electron-updater metadata: when the person clicks "Update", mJournal installs
+# the release's own files itself (src/main/services/updateInstaller.ts), so their
+# names here must match installerFileName() in src/core/updates.ts. Releases are
+# published by .github/workflows/release.yml.
 publish: null
 # Electron's built-in security switches ("fuses"): the packaged app can't be
 # run as plain Node.js, can't be debugged from the command line, and only

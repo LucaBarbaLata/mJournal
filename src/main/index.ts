@@ -11,7 +11,9 @@
  * Development builds use "mJournal-dev" so they never touch a real journal.
  */
 import { app, BrowserWindow, dialog, Menu, nativeTheme, powerMonitor, session, shell } from 'electron';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { EVENTS } from '@core/api';
 import { todayKey } from '@core/dates';
@@ -29,6 +31,7 @@ import { APP_ORIGIN, handleAppProtocol, handleMediaProtocol, registerSchemes } f
 import { Reminder } from './reminders';
 import { fileStamp } from './services/fsutil';
 import { maybeTakeDailySnapshot } from './services/snapshots';
+import { UpdateInstaller, type InstallTarget } from './services/updateInstaller';
 import { UpdateChecker } from './services/updates';
 import { createMainWindow, type WindowState } from './window';
 
@@ -93,17 +96,77 @@ let updates: UpdateChecker | null = null;
 // End-to-end tests point the update check at a local server instead of GitHub.
 const testUpdateFeed = app.isPackaged ? undefined : process.env.MJOURNAL_UPDATE_URL;
 
-/** The only request mJournal sends to the internet (see services/updates.ts). */
+/** GitHub's requests get their own in-memory session: no cookies, no cache, nothing shared with the window. */
+function githubSession(): Electron.Session {
+  return session.fromPartition('mjournal-update-check', { cache: false });
+}
+
+/** The only request mJournal sends to the internet by itself (see services/updates.ts). */
 async function fetchLatestRelease(): Promise<unknown> {
-  // Its own in-memory session: no cookies, no cache, nothing shared with the window.
-  const ses = session.fromPartition('mjournal-update-check', { cache: false });
-  const response = await ses.fetch(testUpdateFeed ?? LATEST_RELEASE_API, {
+  const response = await githubSession().fetch(testUpdateFeed ?? LATEST_RELEASE_API, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'mJournal' },
     signal: AbortSignal.timeout(20_000),
   });
   if (response.status === 404) return null; // Nothing has been released yet.
   if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
   return response.json();
+}
+
+/** How this copy of mJournal installs a new version itself, or null when it can't (see services/updateInstaller.ts). */
+function installTarget(): InstallTarget | null {
+  // Development builds update through git, and releases are built for 64-bit Intel and AMD processors only.
+  if (!app.isPackaged || process.arch !== 'x64') return null;
+  if (process.platform === 'win32') {
+    // The portable app sets PORTABLE_EXECUTABLE_FILE; only the installed app has its uninstaller beside it.
+    if (process.env.PORTABLE_EXECUTABLE_FILE) return null;
+    if (!existsSync(join(dirname(process.execPath), 'Uninstall mJournal.exe'))) return null;
+    return { kind: 'windows', workDir: join(app.getPath('temp'), 'mJournal-update') };
+  }
+  if (process.platform === 'linux') {
+    const appImage = process.env.APPIMAGE;
+    if (appImage) return isAbsolute(appImage) && existsSync(appImage) ? { kind: 'appimage', appImage } : null;
+    // Installed from the .deb: dpkg knows the package, and this is where it puts mJournal.
+    if (process.execPath === '/opt/mJournal/mjournal' && existsSync('/var/lib/dpkg/info/mjournal.list')) {
+      return { kind: 'deb', tempRoot: tmpdir() };
+    }
+  }
+  return null;
+}
+
+/** Runs once mJournal has closed the journal and is about to end: the Windows installer starts here. */
+let afterQuit: (() => void) | null = null;
+
+/** Closes mJournal the usual way, so what is being typed is saved first. */
+function quitForUpdate(then?: () => void): void {
+  afterQuit = then ?? null;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  else app.quit();
+}
+
+/** Runs a program to its end (the .deb installation) and resolves with its exit code. */
+function runProgram(command: string, args: string[]): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    const keep = (data: Buffer) => {
+      output = (output + data.toString()).slice(-4000);
+    };
+    child.stdout.on('data', keep);
+    child.stderr.on('data', keep);
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) log.warn(`${command} ended with code ${code}: ${output.trim()}`);
+      resolve(code ?? -1);
+    });
+  });
+}
+
+/** Starts a program that keeps running after mJournal has ended. */
+function startDetached(command: string, args: string[]): void {
+  // Not in mJournal's own folder, which the installer replaces (or, for the AppImage, which vanishes).
+  const child = spawn(command, args, { cwd: app.getPath('home'), detached: true, stdio: 'ignore' });
+  child.on('error', (err) => log.error(`Could not start ${command}`, err));
+  child.unref();
 }
 
 if (process.platform === 'win32') app.setAppUserModelId('app.mjournal');
@@ -244,6 +307,18 @@ async function start(): Promise<void> {
     },
   );
 
+  const target = installTarget();
+  const installer = target
+    ? new UpdateInstaller({
+        target,
+        fetch: (url, signal) => githubSession().fetch(url, { headers: { 'User-Agent': 'mJournal' }, signal }),
+        quit: quitForUpdate,
+        relaunch: () => app.relaunch(),
+        run: runProgram,
+        startDetached,
+      })
+    : null;
+
   updates = new UpdateChecker({
     currentVersion: app.getVersion(),
     fetchLatestRelease,
@@ -254,6 +329,19 @@ async function start(): Promise<void> {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(EVENTS.updateStatus, status);
     },
     onError: (err) => log.warn('Could not check for a new version', err),
+    installer: installer && {
+      kind: installer.kind,
+      install: async (version, progress) => {
+        log.info(`Downloading mJournal ${version} (${installer.kind})`);
+        try {
+          await installer.install(version, progress);
+          log.info(`Installing mJournal ${version}; closing now`);
+        } catch (err) {
+          log.warn(`Could not install mJournal ${version}`, err);
+          throw err;
+        }
+      },
+    },
   });
   const updateChecker = updates;
 
@@ -302,7 +390,20 @@ async function start(): Promise<void> {
       log.warn('Could not save the daily safety snapshot', err);
     }
   }, 4000);
+
+  // The Windows installer from the last update is done by now; its download can go.
+  if (installer) setTimeout(() => void installer.cleanUp(), 60_000).unref();
 }
+
+app.on('quit', () => {
+  const then = afterQuit;
+  afterQuit = null;
+  try {
+    then?.();
+  } catch (err) {
+    log.error('Could not start the update', err);
+  }
+});
 
 app.on('window-all-closed', () => {
   reminder?.dispose();

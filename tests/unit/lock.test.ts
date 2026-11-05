@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { API_METHODS } from '@core/api';
 import { AUTO_LOCK_MINUTES, FREE_TRIES, isValidPin, wrongPinPause } from '@core/lock';
+import type { UpdateStatus } from '@core/updates';
 import { createApi, OPEN_WHILE_LOCKED, type Platform } from '../../src/main/api';
 import { AppLock } from '../../src/main/lock';
 import { dataPaths } from '../../src/main/paths';
@@ -185,6 +186,15 @@ describe('The PIN lock', () => {
 });
 
 describe('While locked, the API', () => {
+  const OFF: UpdateStatus = {
+    state: 'off',
+    current: '1.0.0',
+    latest: null,
+    checkedAt: null,
+    installer: null,
+    progress: null,
+    installError: null,
+  };
   const platform: Platform = {
     appVersion: '1.0.0-test',
     platformName: 'test',
@@ -196,8 +206,9 @@ describe('While locked, the API', () => {
     openFolder: async () => undefined,
     settingsChanged: () => undefined,
     updates: {
-      status: () => ({ state: 'off', current: '1.0.0', latest: null, checkedAt: null }),
-      check: async () => ({ state: 'off', current: '1.0.0', latest: null, checkedAt: null }),
+      status: () => OFF,
+      check: async () => OFF,
+      install: async () => OFF,
     },
     openReleasePage: async () => undefined,
   };

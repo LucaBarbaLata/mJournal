@@ -1,16 +1,43 @@
 /**
  * Checks GitHub for a newer mJournal: about once a day while "Check for new
  * versions" is on, and whenever the person clicks "Check now". The request
- * carries nothing about the person or their journal, and nothing is ever
- * downloaded: the interface mentions the new version and links to GitHub.
+ * carries nothing about the person or their journal. Nothing is downloaded by
+ * itself: only "Update" downloads and installs the new version
+ * (updateInstaller.ts), and where this copy can't do that, "Get it" links to GitHub.
  */
-import { CHECK_INTERVAL_MS, isNewerVersion, parseVersion, releaseVersion, type UpdateState, type UpdateStatus } from '@core/updates';
+import { UserFacingError } from '@core/validation';
+import {
+  CHECK_INTERVAL_MS,
+  isNewerVersion,
+  parseVersion,
+  releaseVersion,
+  type InstallKind,
+  type UpdateState,
+  type UpdateStatus,
+} from '@core/updates';
 
 /** Remembered between starts, so mJournal doesn't ask again every time it opens. */
 export interface SavedUpdateCheck {
   checkedAt: string;
   /** The newest released version, or null while nothing has been released. */
   released: string | null;
+}
+
+/** What an installation reports while it runs. */
+export interface InstallProgress {
+  /** Part of the download that has arrived, from 0 to 1, or null while the size isn't known. */
+  downloaded(fraction: number | null): void;
+  /** The download is complete and checked; it is being installed now. */
+  installing(): void;
+}
+
+export interface UpdateInstall {
+  kind: InstallKind;
+  /**
+   * Downloads and installs `version`, then mJournal closes (and opens again in the new version). Rejects when it
+   * can't; a UserFacingError's message is shown to the person.
+   */
+  install(version: string, progress: InstallProgress): Promise<void>;
 }
 
 export interface UpdateCheckerOptions {
@@ -23,7 +50,17 @@ export interface UpdateCheckerOptions {
   save: (check: SavedUpdateCheck) => void;
   onChange: (status: UpdateStatus) => void;
   onError?: (err: unknown) => void;
+  /** How this copy installs a new version itself; missing when it can't (the portable app, development builds). */
+  installer?: UpdateInstall | null;
   now?: () => Date;
+}
+
+const INSTALL_FAILED = 'The update couldn’t be installed. Try again, or get it from GitHub.';
+
+interface Installation {
+  version: string;
+  phase: 'downloading' | 'installing';
+  progress: number | null;
 }
 
 /** After a failed check (offline, GitHub busy), try again a few hours later instead of a day later. */
@@ -46,6 +83,8 @@ export class UpdateChecker {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private automatic = false;
   private firstDelayMs = 0;
+  private installation: Installation | null = null;
+  private installError: string | null = null;
 
   constructor(private readonly options: UpdateCheckerOptions) {
     const saved = options.load();
@@ -53,16 +92,64 @@ export class UpdateChecker {
   }
 
   status(): UpdateStatus {
-    const { currentVersion } = this.options;
+    const { currentVersion, installer } = this.options;
     const released = this.saved?.released ?? null;
-    const latest = released !== null && isNewerVersion(released, currentVersion) ? released : null;
+    const latest =
+      this.installation?.version ?? (released !== null && isNewerVersion(released, currentVersion) ? released : null);
     let state: UpdateState;
-    if (this.running) state = 'checking';
+    if (this.installation) state = this.installation.phase;
+    else if (this.running) state = 'checking';
     else if (latest) state = 'available';
     else if (this.failedAt !== null) state = 'failed';
     else if (this.saved) state = 'up-to-date';
     else state = this.options.enabled() ? 'idle' : 'off';
-    return { state, current: currentVersion, latest, checkedAt: this.saved?.checkedAt ?? null };
+    return {
+      state,
+      current: currentVersion,
+      latest,
+      checkedAt: this.saved?.checkedAt ?? null,
+      installer: installer?.kind ?? null,
+      progress: this.installation?.progress ?? null,
+      installError: this.installError,
+    };
+  }
+
+  /**
+   * Downloads and installs the newer version (the "Update" button); mJournal then closes and opens again.
+   * Resolves with the new status and never rejects: when it fails, the status says why.
+   */
+  async install(): Promise<UpdateStatus> {
+    const { installer } = this.options;
+    const { latest } = this.status();
+    if (!installer || !latest || this.installation) return this.status();
+    const installation: Installation = { version: latest, phase: 'downloading', progress: null };
+    this.installation = installation;
+    this.installError = null;
+    this.notify();
+    try {
+      await installer.install(latest, {
+        downloaded: (fraction) => {
+          if (installation.phase !== 'downloading') return;
+          // Whole percents are enough for the progress bar, and keep the messages to the window few.
+          const percent = fraction === null || !Number.isFinite(fraction) ? null : Math.floor(Math.min(1, Math.max(0, fraction)) * 100);
+          const progress = percent === null ? null : percent / 100;
+          if (progress === installation.progress) return;
+          installation.progress = progress;
+          this.notify();
+        },
+        installing: () => {
+          installation.phase = 'installing';
+          installation.progress = null;
+          this.notify();
+        },
+      });
+      // mJournal is closing now; it stays "installing" until then.
+    } catch (err) {
+      this.installation = null;
+      this.installError = err instanceof UserFacingError ? err.message : INSTALL_FAILED;
+      this.notify();
+    }
+    return this.status();
   }
 
   /** Asks GitHub now. Resolves with the new status; never rejects. */

@@ -191,6 +191,26 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+/* How far an update's download is (also in Settings → Updates). */
+.update-progress {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--lavender-100);
+}
+.update-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--lavender-500);
+  transition: width var(--dur-2) var(--ease);
+}
+.update-progress.indeterminate > span {
+  width: 100%;
+  animation: glow-soft 1.6s var(--ease) infinite;
+}
 
 /* ---------- Main area ---------- */
 .main {

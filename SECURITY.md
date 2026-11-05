@@ -29,6 +29,8 @@ Examples of what to report:
 - Getting past the PIN lock screen from inside mJournal, or making mJournal show journal content while it's locked.
 - A backup `.zip` that, when restored, writes files outside the journal folder or damages the journal.
 - The update check sending anything about the person or their journal.
+- *Update* installing a file that doesn't match the release's `SHA256SUMS.txt`, or one from anywhere but the release on
+  GitHub.
 
 Known limits, described in the [README](README.md#privacy), that aren't vulnerabilities:
 

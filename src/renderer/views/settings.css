@@ -487,6 +487,12 @@
   padding-top: 16px;
   border-top: 1px dashed var(--line);
 }
+.update-state {
+  display: grid;
+  flex: 1 1 260px;
+  gap: 8px;
+  max-width: 460px;
+}
 .update-status {
   font-size: var(--text-sm);
   color: var(--ink-soft);

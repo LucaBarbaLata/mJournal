@@ -379,7 +379,13 @@ export interface MJournalApi {
     status(): Promise<UpdateStatus>;
     /** Asks GitHub right away (the "Check now" button). */
     check(): Promise<UpdateStatus>;
-    /** Opens the releases page on GitHub in the browser. Nothing is downloaded by mJournal itself. */
+    /**
+     * Downloads and installs the newer version, then mJournal closes and opens again (the "Update" button). Only
+     * does something while a newer version is available and `installer` isn't null. Resolves with the status; when
+     * installing fails, its `installError` says why.
+     */
+    install(): Promise<UpdateStatus>;
+    /** Opens the releases page on GitHub in the browser (for copies that can't install updates themselves). */
     openReleasePage(): Promise<void>;
   };
   /** The optional PIN lock. Only status, unlock and lock can be called while locked. */
@@ -458,7 +464,7 @@ export const API_METHODS = {
     'cancelRestore',
     'showSavedFile',
   ],
-  updates: ['status', 'check', 'openReleasePage'],
+  updates: ['status', 'check', 'install', 'openReleasePage'],
   lock: ['status', 'unlock', 'lock', 'setPin', 'removePin', 'setAutoLock'],
 } as const satisfies MethodNames<MJournalApi>;
 

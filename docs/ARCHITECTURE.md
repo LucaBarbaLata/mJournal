@@ -182,10 +182,32 @@ The lock keeps other people who use the computer out of mJournal. It does not pr
 more than daily across restarts (the last answer is kept in the `internal.updateCheck` setting), a few hours after a
 failure, and never while *Check for new versions* is off. *Check now* asks right away. `main/index.ts` makes the
 request: a plain `GET` of GitHub’s latest-release API from the main process, in its own in-memory session (no cookies,
-no cache), with the user agent `mJournal`. `core/updates.ts` compares the version numbers. The app never downloads
-anything; *Get it* opens the fixed releases-page address with `shell.openExternal`, never an address taken from the
-answer. Development builds don’t check automatically; end-to-end tests point `MJOURNAL_UPDATE_URL` at a local server
-(only honoured when the app isn’t packaged).
+no cache), with the user agent `mJournal`. `core/updates.ts` compares the version numbers. Development builds don’t
+check automatically; end-to-end tests point `MJOURNAL_UPDATE_URL` at a local server (only honoured when the app isn’t
+packaged).
+
+Nothing is downloaded until the person clicks *Update*. `main/services/updateInstaller.ts` (`UpdateInstaller`) then
+downloads, through the same session, the release’s `SHA256SUMS.txt` and the one file this copy needs, both from fixed
+`github.com/…/releases/download/v<version>/` addresses built from the version number (never an address taken from an
+answer), and checks the file’s SHA-256 before using it. `installTarget()` in `main/index.ts` decides how this copy
+updates:
+
+- **Windows, installed** (the uninstaller is beside `mJournal.exe`, `PORTABLE_EXECUTABLE_FILE` isn’t set): the
+  installer is saved in `%TEMP%\mJournal-update`. mJournal closes the usual way (saving what is being typed, closing the
+  journal) and, on the app’s `quit` event, starts `mJournal-Setup-<version>.exe --updated /S --force-run`: electron-builder’s
+  installer then updates the same folder without its windows and opens mJournal again. The next start removes the
+  folder.
+- **AppImage** (`APPIMAGE` is set): the new AppImage is downloaded beside the old one, made executable and renamed over
+  it, so its path (and any shortcut to it) stays the same. Once mJournal has ended, `/bin/sh` waits for its process to
+  go and starts the new file; `app.relaunch()` can’t be used, because the old AppImage’s files vanish when it ends.
+- **`.deb`** (`/opt/mJournal/mjournal`, and dpkg knows the `mjournal` package): the package goes into a private
+  `mkdtemp` folder and is installed with `pkexec /usr/bin/apt-get install -y <file>`, so the system asks for the
+  password. Then `app.relaunch()` and quit.
+- **Portable app, development builds, other systems or processors:** no installer; *Get it* opens the fixed
+  releases-page address with `shell.openExternal`.
+
+`UpdateChecker.install()` reports the steps as `downloading` (with whole-percent progress) and `installing`; a failure
+returns to `available` with `installError`, and mJournal stays open.
 
 ## Linux
 

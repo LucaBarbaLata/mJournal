@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CHECK_INTERVAL_MS, isNewerVersion, parseVersion, releaseVersion, type UpdateStatus } from '@core/updates';
-import { RETRY_AFTER_FAILURE_MS, UpdateChecker, type SavedUpdateCheck } from '../../src/main/services/updates';
+import {
+  CHECK_INTERVAL_MS,
+  installerFileName,
+  isNewerVersion,
+  parseChecksums,
+  parseVersion,
+  releaseFileUrl,
+  releaseVersion,
+  type UpdateStatus,
+} from '@core/updates';
+import { UserFacingError } from '@core/validation';
+import { RETRY_AFTER_FAILURE_MS, UpdateChecker, type SavedUpdateCheck, type UpdateInstall } from '../../src/main/services/updates';
 
 describe('version numbers', () => {
   it('reads plain and v-prefixed versions, and nothing else', () => {
@@ -25,6 +35,30 @@ describe('version numbers', () => {
     expect(releaseVersion({ tag_name: 'nightly' })).toBeNull();
     expect(releaseVersion({ message: 'Not Found' })).toBeNull();
     expect(releaseVersion(null)).toBeNull();
+  });
+});
+
+describe('release files', () => {
+  it('names the file each kind of copy installs, as the release workflow publishes it', () => {
+    expect(installerFileName('windows', '1.2.3')).toBe('mJournal-Setup-1.2.3.exe');
+    expect(installerFileName('appimage', '1.2.3')).toBe('mJournal-1.2.3.AppImage');
+    expect(installerFileName('deb', '1.2.3')).toBe('mjournal_1.2.3_amd64.deb');
+  });
+
+  it('downloads only from the release’s own page on GitHub', () => {
+    expect(releaseFileUrl('1.2.3', 'SHA256SUMS.txt')).toBe(
+      'https://github.com/LucaBarbaLata/mJournal/releases/download/v1.2.3/SHA256SUMS.txt',
+    );
+  });
+
+  it('reads SHA256SUMS.txt as sha256sum writes it', () => {
+    const a = 'A'.repeat(64);
+    const b = 'b'.repeat(64);
+    const sums = parseChecksums(`${a}  mJournal-Setup-1.2.3.exe\r\n${b} *mJournal-1.2.3.AppImage\nnot a checksum line\n\n`);
+    expect([...sums]).toEqual([
+      ['mJournal-Setup-1.2.3.exe', 'a'.repeat(64)],
+      ['mJournal-1.2.3.AppImage', b],
+    ]);
   });
 });
 
@@ -67,7 +101,15 @@ describe('UpdateChecker', () => {
     const { updates } = checker(async () => ({ tag_name: 'v1.1.0' }));
     expect(updates.status()).toMatchObject({ state: 'idle', latest: null, checkedAt: null });
     const status = await updates.check();
-    expect(status).toEqual({ state: 'available', current: '1.0.0', latest: '1.1.0', checkedAt: START.toISOString() });
+    expect(status).toEqual({
+      state: 'available',
+      current: '1.0.0',
+      latest: '1.1.0',
+      checkedAt: START.toISOString(),
+      installer: null,
+      progress: null,
+      installError: null,
+    });
     expect(saved).toEqual({ checkedAt: START.toISOString(), released: '1.1.0' });
     expect(changes.map((c) => c.state)).toEqual(['checking', 'available']);
   });
@@ -142,6 +184,72 @@ describe('UpdateChecker', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(updates.status().state).toBe('up-to-date');
     updates.stop();
+  });
+
+  describe('installing', () => {
+    function installing(install: UpdateInstall['install']) {
+      const fetch = vi.fn(async () => ({ tag_name: 'v1.1.0' }));
+      const installer: UpdateInstall = { kind: 'windows', install: vi.fn(install) };
+      const updates = new UpdateChecker({
+        currentVersion: '1.0.0',
+        fetchLatestRelease: fetch,
+        enabled: () => true,
+        load: () => saved,
+        save: (check) => {
+          saved = check;
+        },
+        onChange: (status) => changes.push(status),
+        installer,
+      });
+      return { updates, installer };
+    }
+
+    it('downloads and installs the newer version, reporting whole percents', async () => {
+      const { updates, installer } = installing(async (_version, progress) => {
+        for (const fraction of [null, 0.001, 0.004, 0.5, 0.503, 1]) progress.downloaded(fraction);
+        progress.installing();
+      });
+      await updates.check();
+      expect(updates.status()).toMatchObject({ state: 'available', installer: 'windows', installError: null });
+      changes = [];
+      const status = await updates.install();
+      expect(installer.install).toHaveBeenCalledWith('1.1.0', expect.anything());
+      expect(changes.map((c) => [c.state, c.progress])).toEqual([
+        ['downloading', null],
+        ['downloading', 0],
+        ['downloading', 0.5],
+        ['downloading', 1],
+        ['installing', null],
+      ]);
+      // mJournal is closing; it stays "installing" until it has.
+      expect(status).toMatchObject({ state: 'installing', latest: '1.1.0' });
+      expect(await updates.install()).toMatchObject({ state: 'installing' });
+      expect(installer.install).toHaveBeenCalledTimes(1);
+    });
+
+    it('says why installing failed and lets the person try again', async () => {
+      let attempt = 0;
+      const { updates } = installing(async () => {
+        attempt++;
+        if (attempt === 1) throw new UserFacingError('update-download', 'The download stopped.');
+        throw new Error('disk on fire');
+      });
+      await updates.check();
+      expect(await updates.install()).toMatchObject({ state: 'available', installError: 'The download stopped.' });
+      // Anything that isn't meant for the person gets a general message.
+      expect((await updates.install()).installError).toMatch(/couldn’t be installed/);
+      expect(attempt).toBe(2);
+    });
+
+    it('does nothing without a newer version or a way to install it', async () => {
+      const { updates, installer } = installing(async () => undefined);
+      expect(await updates.install()).toMatchObject({ state: 'idle' });
+      expect(installer.install).not.toHaveBeenCalled();
+
+      const { updates: portable } = checker(async () => ({ tag_name: 'v1.1.0' }));
+      await portable.check();
+      expect(await portable.install()).toMatchObject({ state: 'available', installer: null });
+    });
   });
 
   it('never asks by itself while automatic checks are off', async () => {

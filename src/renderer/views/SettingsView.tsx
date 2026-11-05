@@ -5,7 +5,7 @@ import { formatLongDate, todayKey, type DateFormatPreference } from '@core/dates
 import type { UpdateStatus } from '@core/updates';
 import { Icon, type IconName } from '../components/Icon';
 import { LogoMark, Wordmark } from '../components/Logo';
-import { openReleasePage } from '../components/UpdateNotice';
+import { downloadPercent, installUpdate, openReleasePage, UpdateProgress } from '../components/UpdateNotice';
 import { api, errorMessage } from '../lib/api';
 import { useApp, type AppState } from '../lib/app';
 import { withThemeFade } from '../lib/motion';
@@ -367,6 +367,14 @@ function describeUpdate(status: UpdateStatus, format: AppState['format']): strin
       return 'Asking GitHub…';
     case 'available':
       return `mJournal ${status.latest} is out. You have ${status.current}.`;
+    case 'downloading': {
+      const percent = downloadPercent(status);
+      return `Downloading mJournal ${status.latest}…${percent === null ? '' : ` ${percent}%`}`;
+    }
+    case 'installing':
+      return status.installer === 'deb'
+        ? `Installing mJournal ${status.latest}. Your computer asks for your password to install it, then mJournal opens again.`
+        : `Installing mJournal ${status.latest}. mJournal closes now and opens again by itself.`;
     case 'failed':
       return `GitHub couldn’t be reached just now. Are you online?${checked}`;
     case 'up-to-date':
@@ -381,6 +389,7 @@ function UpdateSettings() {
   const { settings, set, error } = useSetting();
   const { format } = useApp();
   const [status, setStatus] = useUpdateStatus();
+  const busy = status?.state === 'checking' || status?.state === 'downloading' || status?.state === 'installing';
   const checkNow = async () => {
     try {
       setStatus(await api.updates.check());
@@ -388,14 +397,19 @@ function UpdateSettings() {
       // The status line already says when GitHub couldn't be reached.
     }
   };
+  const update = async () => {
+    const next = await installUpdate();
+    if (next) setStatus(next);
+  };
   return (
     <SettingsSection id="updates" title="Updates">
       <div className="setting-row">
         <div>
           <h3>Check for new versions</h3>
           <p className="muted">
-            About once a day, mJournal asks GitHub whether a newer version is out. That’s the only thing it ever asks the
-            internet: nothing about you or your journal is sent, and nothing is downloaded or installed by itself.
+            About once a day, mJournal asks GitHub whether a newer version is out. That’s the only thing it asks the
+            internet by itself: nothing about you or your journal is sent, and a new version is downloaded and installed
+            only when you click <em>Update</em>.
           </p>
         </div>
         <label className="switch">
@@ -408,20 +422,30 @@ function UpdateSettings() {
         </label>
       </div>
       <div className="update-row">
-        <p className="update-status" aria-live="polite">
-          {status ? describeUpdate(status, format) : ''}
-        </p>
+        <div className="update-state">
+          <p className="update-status" aria-live="polite">
+            {status ? describeUpdate(status, format) : ''}
+          </p>
+          {status && (status.state === 'downloading' || status.state === 'installing') && <UpdateProgress status={status} />}
+        </div>
         <div className="row-actions">
-          {status?.state === 'available' && (
-            <button type="button" className="btn btn-primary" onClick={openReleasePage}>
-              <Icon name="download" size={16} /> Get mJournal {status.latest}
+          {status?.state === 'available' && status.installer && (
+            <button type="button" className="btn btn-primary" onClick={() => void update()}>
+              <Icon name="download" size={16} /> Update to mJournal {status.latest}
             </button>
           )}
-          <button type="button" className="btn" disabled={status?.state === 'checking'} onClick={() => void checkNow()}>
+          {status?.state === 'available' && (!status.installer || status.installError) && (
+            <button type="button" className={status.installer ? 'btn' : 'btn btn-primary'} onClick={openReleasePage}>
+              <Icon name="download" size={16} /> Get mJournal {status.latest}
+              {status.installer ? ' from GitHub' : ''}
+            </button>
+          )}
+          <button type="button" className="btn" disabled={busy} onClick={() => void checkNow()}>
             <Icon name="restore" size={16} /> Check now
           </button>
         </div>
       </div>
+      <ErrorLine error={status?.state === 'available' ? status.installError : null} />
       <ErrorLine error={error} />
     </SettingsSection>
   );
