@@ -78,7 +78,8 @@ Then open mJournal from its desktop shortcut or the Start menu (or double-click 
 
 **Checking a download:** `SHA256SUMS.txt` on the same page lists every file’s checksum. On Windows,
 `Get-FileHash .\mJournal-Setup-<version>.exe` in PowerShell should print the same value; on Linux, run
-`sha256sum -c SHA256SUMS.txt --ignore-missing` in the download folder.
+`sha256sum -c SHA256SUMS.txt --ignore-missing` in the download folder. The release notes also link to
+VirusTotal’s scan of both Windows files.
 
 > **“Windows protected your PC”** — Windows shows this for apps that aren’t code-signed. Choose **More info →
 > Run anyway**. mJournal isn’t signed because signing certificates cost money every year, which doesn’t fit a free
@@ -262,8 +263,11 @@ as pull requests, which the same workflow tests.
    - **release** — public, and everyone’s mJournal mentions it in the sidebar.
 
 [.github/workflows/release.yml](.github/workflows/release.yml) type-checks and tests everything on Windows and on Linux,
-builds the installer and the portable app on Windows and the `.deb` and the AppImage on Linux, and puts all four on the
-Releases page with a `SHA256SUMS.txt`. If either system’s tests or build fail, nothing is published. The `v1.0.0`-style tag is
+builds the installer and the portable app on Windows and the `.deb` and the AppImage on Linux, uploads the two Windows
+files to VirusTotal, and puts all four on the Releases page with a `SHA256SUMS.txt` and links to the VirusTotal results
+in the release notes. If either system’s tests or build fail, or the scan can’t be done, nothing is published. The scan
+needs a free VirusTotal API key saved once as the repository secret `VT_API_KEY` (*Settings → Secrets and variables →
+Actions*). The `v1.0.0`-style tag is
 created when the release is published. Running it again for the same version replaces a draft. Running it with
 **release** while that version is a pre-release turns the pre-release into the release, without building again, as
 long as the app hasn’t changed since (edits to `.github/`, `docs/` and Markdown files don’t count). A version that is

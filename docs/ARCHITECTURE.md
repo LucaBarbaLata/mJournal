@@ -243,9 +243,12 @@ A short `check` job (Linux) looks at the Releases page first: it stops if the ve
 released, and with *release* it turns an existing pre-release of that version into the release (`gh release edit`)
 instead of rebuilding, provided nothing outside `.github/`, `docs/` and Markdown changed since its tag. Otherwise two build jobs run side by side: `windows` runs `npm ci`, `npm run verify` and `npm run dist`;
 `linux` (Ubuntu 24.04) runs the same tests under `xvfb-run` and builds with `npm run dist:linux`. electron-builder can’t
-make Linux packages on Windows, hence the second runner. Only if both succeed does `publish` collect their files, write
-`SHA256SUMS.txt` and create the release `v<version>` at the built commit with `gh release create` (replacing an earlier
-draft of the same version). There is deliberately no tag
+make Linux packages on Windows, hence the second runner. As soon as `windows` is done, `virustotal` uploads its two
+`.exe` files with the VirusTotal API (key in the `VT_API_KEY` secret, kept out of the job that can write releases),
+waits for the scans and hands on Markdown links to `virustotal.com/gui/file/<sha256>`. Only if all three succeed does
+`publish` collect the files, write `SHA256SUMS.txt` and create the release `v<version>` at the built commit with
+`gh release create` (replacing an earlier draft of the same version); its notes are GitHub’s generated changelog
+(`releases/generate-notes`) followed by the VirusTotal links. There is deliberately no tag
 trigger: publishing a draft creates its tag, which would otherwise start a second run. The update check reads GitHub’s
 “latest release”, which never includes drafts or pre-releases. electron-builder itself never publishes
 (`publish: null`), so no auto-update metadata is produced.

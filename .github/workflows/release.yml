@@ -9,6 +9,10 @@
 #   Running it with "release" when a pre-release of the same version and commit exists
 #   turns that pre-release into the release, without building again.
 # The tag (v1.0.0, …) is created when the release is published.
+#
+# The Windows files are scanned by VirusTotal and the release notes link to the results. That needs a
+# VirusTotal API key (free: sign in on virustotal.com → your name → API key) saved once as the repository
+# secret VT_API_KEY: Settings → Secrets and variables → Actions → New repository secret.
 name: Release
 
 on:
@@ -167,10 +171,84 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # Only runs when both builds passed, so a release always has every file.
+  # Starts as soon as the Windows build is done, so it mostly runs while Linux is still building.
+  virustotal:
+    name: VirusTotal scan
+    needs: [check, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    outputs:
+      notes: ${{ steps.scan.outputs.notes }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows
+          path: release
+
+      - name: Scan the Windows files on VirusTotal
+        id: scan
+        working-directory: release
+        shell: bash
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          if [ -z "$VT_API_KEY" ]; then
+            echo "::error::There's no VirusTotal API key. Add yours as the repository secret VT_API_KEY (Settings → Secrets and variables → Actions), then re-run the failed jobs."
+            exit 1
+          fi
+          api=https://www.virustotal.com/api/v3
+          # The free API allows 4 requests a minute: when VirusTotal says to slow down, curl waits and tries again.
+          vt() { curl -fsS --retry 5 --retry-delay 30 -H "x-apikey: $VT_API_KEY" "$@"; }
+          files=("mJournal-Setup-$VERSION.exe" "mJournal-$VERSION-portable.exe")
+
+          # Files over 32 MB are sent to a one-off upload address.
+          ids=()
+          for file in "${files[@]}"; do
+            url=$(vt "$api/files/upload_url" | jq -er .data)
+            id=$(vt -F "file=@$file" "$url" | jq -er .data.id)
+            ids+=("$id")
+            echo "Uploaded $file"
+          done
+
+          # Wait (up to 15 minutes a file) for the scans, so the links show a result once the release is out.
+          lines=()
+          for i in "${!files[@]}"; do
+            file=${files[$i]}
+            status=
+            for _ in $(seq 15); do
+              sleep 60
+              analysis=$(vt "$api/analyses/${ids[$i]}")
+              status=$(jq -r .data.attributes.status <<<"$analysis")
+              [ "$status" = completed ] && break
+            done
+            if [ "$status" = completed ]; then
+              jq -r --arg f "$file" '.data.attributes.stats | "\($f): \(.malicious) engines flag it as malicious, \(.suspicious) as suspicious, \(.undetected) find nothing"' <<<"$analysis"
+              if [ "$(jq .data.attributes.stats.malicious <<<"$analysis")" -gt 0 ]; then
+                echo "::warning::Some VirusTotal engines flag $file. Look at its report before publishing."
+              fi
+            else
+              echo "::warning::VirusTotal hadn't finished scanning $file. Its link will show the result once it has."
+            fi
+            sha=$(sha256sum -- "$file" | cut -d' ' -f1)
+            lines+=("- [$file](https://www.virustotal.com/gui/file/$sha)")
+          done
+
+          {
+            echo 'notes<<END_OF_NOTES'
+            echo '## VirusTotal scans'
+            echo
+            printf '%s\n' "${lines[@]}"
+            echo 'END_OF_NOTES'
+          } >> "$GITHUB_OUTPUT"
+
+  # Only runs when both builds and the scan passed, so a release always has every file.
   publish:
     name: Put it on the Releases page
-    needs: [check, windows, linux]
+    needs: [check, windows, linux, virustotal]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -195,12 +273,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           KIND: ${{ inputs.kind }}
+          VIRUSTOTAL: ${{ needs.virustotal.outputs.notes }}
         run: |
           tag="v$VERSION"
           # A draft left by an earlier run for this version is replaced.
           if [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = "true" ]; then
             gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
           fi
+          # GitHub's list of changes since the last release, with the VirusTotal links below it.
+          notes="$RUNNER_TEMP/notes.md"
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" --jq .body > "$notes"
+          printf '\n\n%s\n' "$VIRUSTOTAL" >> "$notes"
           case "$KIND" in
             draft) flag=--draft ;;
             pre-release) flag=--prerelease ;;
@@ -215,6 +299,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "mJournal $VERSION" \
-            --generate-notes \
+            --notes-file "$notes" \
             "$flag"
           echo "Made a $KIND for mJournal $VERSION: https://github.com/$GITHUB_REPOSITORY/releases"
