@@ -22,6 +22,7 @@ function setup(overrides: Partial<Platform> = {}) {
     installer: null,
     progress: null,
     installError: null,
+    result: null,
   };
   const platform: Platform = {
     appVersion: '1.0.0-test',
@@ -33,7 +34,7 @@ function setup(overrides: Partial<Platform> = {}) {
     showItemInFolder: (p) => revealed.push(p),
     openFolder: async () => undefined,
     settingsChanged: (s) => changed.push(s),
-    updates: { status: () => upToDate, check: async () => upToDate, install: async () => upToDate },
+    updates: { status: () => upToDate, check: async () => upToDate, install: async () => upToDate, dismissResult: () => upToDate },
     openReleasePage: async () => void opened.push('releases'),
     ...overrides,
   };
@@ -140,6 +141,7 @@ describe('API handlers', () => {
     expect((await api.updates.status()).state).toBe('up-to-date');
     expect((await api.updates.check()).state).toBe('up-to-date');
     expect((await api.updates.install()).state).toBe('up-to-date');
+    expect((await api.updates.dismissResult()).result).toBeNull();
     await api.updates.openReleasePage();
     expect(opened).toEqual(['releases']);
   });

@@ -1,9 +1,12 @@
 /**
- * Checks GitHub for a newer mJournal: about once a day while "Check for new
- * versions" is on, and whenever the person clicks "Check now". The request
- * carries nothing about the person or their journal. Nothing is downloaded by
- * itself: only "Update" downloads and installs the new version
- * (updateInstaller.ts), and where this copy can't do that, "Get it" links to GitHub.
+ * Checks GitHub for a newer mJournal while "Check for new versions" is on: once
+ * each time mJournal starts, then about once a day while it stays open, and
+ * whenever the person clicks "Check now". The request carries nothing about the
+ * person or their journal. Nothing is downloaded by itself: only "Update"
+ * downloads and installs the new version (updateInstaller.ts), and where this
+ * copy can't do that, "Get it" links to GitHub. How the update went is kept in
+ * the status (`result`) until the person has seen it: a failure right away, a
+ * finished update after mJournal has opened again.
  */
 import { UserFacingError } from '@core/validation';
 import {
@@ -12,6 +15,7 @@ import {
   parseVersion,
   releaseVersion,
   type InstallKind,
+  type UpdateResult,
   type UpdateState,
   type UpdateStatus,
 } from '@core/updates';
@@ -21,6 +25,17 @@ export interface SavedUpdateCheck {
   checkedAt: string;
   /** The newest released version, or null while nothing has been released. */
   released: string | null;
+}
+
+/**
+ * Remembered from the moment an update starts installing until the person has seen how it went: mJournal closes
+ * while it installs, so only the next start can tell whether it worked.
+ */
+export interface PendingUpdate {
+  /** The version being installed. */
+  version: string;
+  /** The version that was running. */
+  previous: string;
 }
 
 /** What an installation reports while it runs. */
@@ -48,6 +63,10 @@ export interface UpdateCheckerOptions {
   enabled: () => boolean;
   load: () => unknown;
   save: (check: SavedUpdateCheck) => void;
+  /** The PendingUpdate remembered by an earlier start, if any. */
+  loadPending?: () => unknown;
+  /** Remembers an update that is being installed; null forgets it. */
+  savePending?: (pending: PendingUpdate | null) => void;
   onChange: (status: UpdateStatus) => void;
   onError?: (err: unknown) => void;
   /** How this copy installs a new version itself; missing when it can't (the portable app, development builds). */
@@ -65,6 +84,14 @@ interface Installation {
 
 /** After a failed check (offline, GitHub busy), try again a few hours later instead of a day later. */
 export const RETRY_AFTER_FAILURE_MS = 3 * 60 * 60 * 1000;
+
+function isPendingUpdate(value: unknown): value is PendingUpdate {
+  if (typeof value !== 'object' || value === null) return false;
+  const { version, previous } = value as Record<string, unknown>;
+  return (
+    typeof version === 'string' && parseVersion(version) !== null && typeof previous === 'string' && parseVersion(previous) !== null
+  );
+}
 
 function isSavedCheck(value: unknown): value is SavedUpdateCheck {
   if (typeof value !== 'object' || value === null) return false;
@@ -85,10 +112,23 @@ export class UpdateChecker {
   private firstDelayMs = 0;
   private installation: Installation | null = null;
   private installError: string | null = null;
+  private result: UpdateResult | null = null;
+  /** Whether GitHub has been asked since mJournal started: every start asks once, however recently it asked before. */
+  private askedSinceStart = false;
 
   constructor(private readonly options: UpdateCheckerOptions) {
     const saved = options.load();
     this.saved = isSavedCheck(saved) ? saved : null;
+    // An update was being installed when mJournal closed: it worked if this is (at least) the new version.
+    const pending = options.loadPending?.();
+    if (isPendingUpdate(pending)) {
+      this.result = {
+        outcome: isNewerVersion(pending.version, options.currentVersion) ? 'failed' : 'installed',
+        version: pending.version,
+        previous: pending.previous,
+        error: null,
+      };
+    }
   }
 
   status(): UpdateStatus {
@@ -111,7 +151,18 @@ export class UpdateChecker {
       installer: installer?.kind ?? null,
       progress: this.installation?.progress ?? null,
       installError: this.installError,
+      result: this.result,
     };
+  }
+
+  /** The person has seen how the update went (closed its window), so it isn't shown again. */
+  dismissResult(): UpdateStatus {
+    if (this.result) {
+      this.result = null;
+      this.rememberPending(null);
+      this.notify();
+    }
+    return this.status();
   }
 
   /**
@@ -122,9 +173,15 @@ export class UpdateChecker {
     const { installer } = this.options;
     const { latest } = this.status();
     if (!installer || !latest || this.installation) return this.status();
+    const { currentVersion } = this.options;
     const installation: Installation = { version: latest, phase: 'downloading', progress: null };
     this.installation = installation;
     this.installError = null;
+    // A new try replaces what the window said about the last one.
+    if (this.result) {
+      this.result = null;
+      this.rememberPending(null);
+    }
     this.notify();
     try {
       await installer.install(latest, {
@@ -140,6 +197,8 @@ export class UpdateChecker {
         installing: () => {
           installation.phase = 'installing';
           installation.progress = null;
+          // Before mJournal closes to install, so the next start can say whether it worked.
+          this.rememberPending({ version: latest, previous: currentVersion });
           this.notify();
         },
       });
@@ -147,6 +206,9 @@ export class UpdateChecker {
     } catch (err) {
       this.installation = null;
       this.installError = err instanceof UserFacingError ? err.message : INSTALL_FAILED;
+      // mJournal stays open, so the window says so right away instead of at the next start.
+      this.result = { outcome: 'failed', version: latest, previous: currentVersion, error: this.installError };
+      this.rememberPending(null);
       this.notify();
     }
     return this.status();
@@ -199,6 +261,16 @@ export class UpdateChecker {
     } catch (err) {
       this.failedAt = this.now().getTime();
       this.options.onError?.(err);
+    } finally {
+      this.askedSinceStart = true;
+    }
+  }
+
+  private rememberPending(pending: PendingUpdate | null): void {
+    try {
+      this.options.savePending?.(pending);
+    } catch (err) {
+      this.options.onError?.(err);
     }
   }
 
@@ -206,7 +278,8 @@ export class UpdateChecker {
     this.clearTimer();
     if (!this.automatic || !this.options.enabled()) return;
     const now = this.now().getTime();
-    let due = this.saved ? Date.parse(this.saved.checkedAt) + CHECK_INTERVAL_MS : now;
+    // The first check after start is due right away; after that, a day after the last answer.
+    let due = this.askedSinceStart && this.saved ? Date.parse(this.saved.checkedAt) + CHECK_INTERVAL_MS : now;
     if (this.failedAt !== null) due = Math.max(due, this.failedAt + RETRY_AFTER_FAILURE_MS);
     // Never wait longer than the interval, even if the clock was turned back.
     const delay = Math.min(Math.max(due - now, minDelayMs), CHECK_INTERVAL_MS);

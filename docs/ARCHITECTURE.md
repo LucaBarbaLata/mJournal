@@ -178,9 +178,10 @@ The lock keeps other people who use the computer out of mJournal. It does not pr
 
 ### The update check
 
-`main/services/updates.ts` (`UpdateChecker`) decides *when*: about 10 seconds after start and then once a day, never
-more than daily across restarts (the last answer is kept in the `internal.updateCheck` setting), a few hours after a
-failure, and never while *Check for new versions* is off. *Check now* asks right away. `main/index.ts` makes the
+`main/services/updates.ts` (`UpdateChecker`) decides *when*: about 3 seconds after every start, then a day after the
+last answer while mJournal stays open (the last answer is kept in the `internal.updateCheck` setting, so Settings can
+show it before the first check), a few hours after a failure, and never while *Check for new versions* is off. Turning
+it on checks within seconds if this start hasn’t asked yet. *Check now* asks right away. `main/index.ts` makes the
 request: a plain `GET` of GitHub’s latest-release API from the main process, in its own in-memory session (no cookies,
 no cache), with the user agent `mJournal`. `core/updates.ts` compares the version numbers. Development builds don’t
 check automatically; end-to-end tests point `MJOURNAL_UPDATE_URL` at a local server (only honoured when the app isn’t
@@ -208,6 +209,14 @@ updates:
 
 `UpdateChecker.install()` reports the steps as `downloading` (with whole-percent progress) and `installing`; a failure
 returns to `available` with `installError`, and mJournal stays open.
+
+How it went is the status’s `result`, which the renderer shows in a window (`UpdateResultDialog`) after the welcome
+guide and the PIN. A failure while mJournal is open sets it right away, with the reason. For the rest, `installing`
+first saves `{ version, previous }` in the `internal.pendingUpdate` setting, because mJournal closes to install: the next
+start reads it and calls the update `installed` if it now runs that version or a newer one, otherwise `failed` (the
+installer was cancelled, or Windows’ permission prompt declined). The setting is cleared when the person closes the
+window (`updates.dismissResult`) or starts another update, so a start that ends at the lock screen still shows it the
+next time.
 
 ## Linux
 

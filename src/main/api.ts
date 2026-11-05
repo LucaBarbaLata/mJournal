@@ -46,7 +46,7 @@ export interface Platform {
   openFolder(path: string): Promise<void>;
   settingsChanged(settings: Settings): void;
   /** The update check (services/updates.ts). */
-  updates: { status(): UpdateStatus; check(): Promise<UpdateStatus>; install(): Promise<UpdateStatus> };
+  updates: { status(): UpdateStatus; check(): Promise<UpdateStatus>; install(): Promise<UpdateStatus>; dismissResult(): UpdateStatus };
   openReleasePage(): Promise<void>;
 }
 
@@ -378,6 +378,7 @@ export function createApi(host: JournalHost, platform: Platform, appLock: AppLoc
       status: async () => platform.updates.status(),
       check: async () => platform.updates.check(),
       install: async () => platform.updates.install(),
+      dismissResult: async () => platform.updates.dismissResult(),
       openReleasePage: async () => platform.openReleasePage(),
     },
 

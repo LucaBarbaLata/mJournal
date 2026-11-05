@@ -3,7 +3,7 @@ import { ConfirmHost } from './components/Dialog';
 import { Icon, type IconName } from './components/Icon';
 import { LogoMark, Wordmark } from './components/Logo';
 import { ToastHost } from './components/Toasts';
-import { UpdateNotice } from './components/UpdateNotice';
+import { UpdateNotice, UpdateResultDialog } from './components/UpdateNotice';
 import { native } from './lib/api';
 import { AppProvider, useApp } from './lib/app';
 import { LockProvider, useLock } from './lib/lock';
@@ -216,6 +216,8 @@ function Shell() {
       <ConfirmHost />
       <ToastHost />
       {!settings.onboardingDone && <Onboarding />}
+      {/* After the welcome guide, and (like everything in Shell) only once the PIN is entered. */}
+      {settings.onboardingDone && <UpdateResultDialog />}
     </div>
   );
 }

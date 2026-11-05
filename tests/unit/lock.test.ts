@@ -194,6 +194,7 @@ describe('While locked, the API', () => {
     installer: null,
     progress: null,
     installError: null,
+    result: null,
   };
   const platform: Platform = {
     appVersion: '1.0.0-test',
@@ -209,6 +210,7 @@ describe('While locked, the API', () => {
       status: () => OFF,
       check: async () => OFF,
       install: async () => OFF,
+      dismissResult: () => OFF,
     },
     openReleasePage: async () => undefined,
   };

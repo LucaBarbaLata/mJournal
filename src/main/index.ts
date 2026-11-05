@@ -325,10 +325,12 @@ async function start(): Promise<void> {
     enabled: () => journalHost.journal.settings.get().checkForUpdates,
     load: () => journalHost.journal.settings.getInternal('updateCheck'),
     save: (check) => journalHost.journal.settings.setInternal('updateCheck', check),
+    loadPending: () => journalHost.journal.settings.getInternal('pendingUpdate'),
+    savePending: (pending) => journalHost.journal.settings.setInternal('pendingUpdate', pending),
     onChange: (status) => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(EVENTS.updateStatus, status);
     },
-    onError: (err) => log.warn('Could not check for a new version', err),
+    onError: (err) => log.warn('Update check problem', err),
     installer: installer && {
       kind: installer.kind,
       install: async (version, progress) => {
@@ -344,6 +346,8 @@ async function start(): Promise<void> {
     },
   });
   const updateChecker = updates;
+  const { result } = updateChecker.status();
+  if (result) log.info(`The update from ${result.previous} to ${result.version} ${result.outcome === 'installed' ? 'worked' : 'failed'}`);
 
   const platform = electronPlatform(
     () => mainWindow,
@@ -378,8 +382,9 @@ async function start(): Promise<void> {
     mainWindow = null;
   });
 
-  // Automatic checks only in the released app (and in tests that bring their own feed).
-  if (app.isPackaged || testUpdateFeed) updateChecker.start(testUpdateFeed ? 300 : 10_000);
+  // Automatic checks only in the released app (and in tests that bring their own feed): every start asks once,
+  // a few seconds in so start-up stays quick.
+  if (app.isPackaged || testUpdateFeed) updateChecker.start(testUpdateFeed ? 300 : 3_000);
 
   // The daily safety snapshot runs after the window is up so startup stays quick.
   setTimeout(() => {

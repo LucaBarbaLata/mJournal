@@ -382,9 +382,11 @@ export interface MJournalApi {
     /**
      * Downloads and installs the newer version, then mJournal closes and opens again (the "Update" button). Only
      * does something while a newer version is available and `installer` isn't null. Resolves with the status; when
-     * installing fails, its `installError` says why.
+     * installing fails, its `installError` and `result` say why.
      */
     install(): Promise<UpdateStatus>;
+    /** The person closed the window that says how the update went (`result`); it isn't shown again. */
+    dismissResult(): Promise<UpdateStatus>;
     /** Opens the releases page on GitHub in the browser (for copies that can't install updates themselves). */
     openReleasePage(): Promise<void>;
   };
@@ -464,7 +466,7 @@ export const API_METHODS = {
     'cancelRestore',
     'showSavedFile',
   ],
-  updates: ['status', 'check', 'install', 'openReleasePage'],
+  updates: ['status', 'check', 'install', 'dismissResult', 'openReleasePage'],
   lock: ['status', 'unlock', 'lock', 'setPin', 'removePin', 'setAutoLock'],
 } as const satisfies MethodNames<MJournalApi>;
 

@@ -98,10 +98,10 @@ or newer isn’t installed (Ubuntu-based systems ship an older one), a private c
 
 ### Updating
 
-About once a day mJournal asks GitHub whether a newer version is out, and if so a small note appears in the sidebar.
-Nothing is downloaded until you click **Update** (in the note, or in **Settings → Updates**). mJournal then downloads
-the new version from the Releases page, checks it against the release’s `SHA256SUMS.txt`, installs it and opens again
-— and your journal **stays as it is**:
+Each time it starts, and about once a day while it stays open, mJournal asks GitHub whether a newer version is out,
+and if so a small note appears in the sidebar. Nothing is downloaded until you click **Update** (in the note, or in
+**Settings → Updates**). mJournal then downloads the new version from the Releases page, checks it against the
+release’s `SHA256SUMS.txt`, installs it and opens again — and your journal **stays as it is**:
 
 - **Installed on Windows:** mJournal closes, the installer updates it in the same folder without showing its windows,
   and opens it again. If you installed it for all users, Windows asks for permission first.
@@ -109,6 +109,9 @@ the new version from the Releases page, checks it against the release’s `SHA25
 - **`.deb`:** your system asks for your password, then the package is installed and mJournal starts again.
 - **Portable version:** it can’t replace itself, so *Get it* opens the Releases page in your browser instead; replace
   the old file with the new one.
+
+Afterwards a window tells you whether the update worked. If it didn’t, it says why when mJournal knows, and offers to
+try again or to get the new version from GitHub.
 
 You can turn the check off, or check right away, in **Settings → Updates**.
 
@@ -169,8 +172,8 @@ All of these live in **Settings → Backup & export**.
 
 - **Local only.** No account, no cloud sync, no analytics, telemetry or ads. Your writing, moods and photos never
   leave your computer; fonts and icons are bundled, and search, statistics and backups all run locally.
-- **One question to the internet.** The only request mJournal makes by itself is the update check: about once a day
-  it asks GitHub (`api.github.com`) which version was released last. Like any web request it reveals your IP address
+- **One question to the internet.** The only request mJournal makes by itself is the update check: when it starts,
+  and about once a day while it stays open, it asks GitHub (`api.github.com`) which version was released last. Like any web request it reveals your IP address
   to GitHub, but it carries nothing about you or your journal — no cookies, no ids, just “mJournal”. Clicking
   **Update** downloads the new version from GitHub’s Releases page, just as anonymously. Turn the check off in
   **Settings → Updates** and mJournal never goes online unless you click *Check now* or *Update*.
@@ -211,8 +214,8 @@ Found a security problem? Please report it privately, as described in [SECURITY.
 | “Windows protected your PC” | Choose **More info → Run anyway** (the app isn’t code-signed). |
 | mJournal says it couldn’t open your journal | Nothing has been deleted. *Open data folder* to look around, or *Set it aside and start a new journal*: the database is moved to `backups\damaged-journal-…`, and you can then restore a complete backup from Settings. |
 | “This journal was saved by a newer version of mJournal” | Your data is untouched. Install the newer version from the [Releases page](https://github.com/LucaBarbaLata/mJournal/releases/latest). |
-| *Update* didn’t work | **Settings → Updates** says why, and *Get mJournal … from GitHub* opens the Releases page: download the installer (or the `.deb`, or the AppImage) and run it — that keeps your journal too. The AppImage can only replace itself if mJournal may save files in the folder it is in. |
-| Settings → Updates says GitHub couldn’t be reached | You’re offline, or a firewall blocks `api.github.com`. Nothing else is affected; mJournal tries again a few hours later. |
+| *Update* didn’t work | The window after the update (and **Settings → Updates**) says why, and *Get mJournal … from GitHub* opens the Releases page: download the installer (or the `.deb`, or the AppImage) and run it — that keeps your journal too. The AppImage can only replace itself if mJournal may save files in the folder it is in. |
+| Settings → Updates says GitHub couldn’t be reached | You’re offline, or a firewall blocks `api.github.com`. Nothing else is affected; mJournal tries again a few hours later, and when it next starts. |
 | Forgot your PIN | Close mJournal, open the data folder (see [Where your journal is stored](#where-your-journal-is-stored)) and delete `lock.json`. mJournal then opens without a PIN, and your journal is exactly as it was. Set a new PIN in *Settings → PIN lock*. |
 | A photo shows “Photo unavailable” | Its file is missing from `photos\` (Settings → Data & privacy counts these). Restoring a complete backup brings it back. |
 | iPhone photos (HEIC) are rejected | Save them as JPEG first — on the iPhone: *Settings → Camera → Formats → Most Compatible*; or open them in the Windows Photos app and *Save as* JPEG. |

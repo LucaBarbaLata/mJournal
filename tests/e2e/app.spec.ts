@@ -13,6 +13,7 @@ import {
   stubOpenDialog,
   stubSaveDialog,
   writeImage,
+  writeInternalSetting,
   type Launched,
 } from './fixtures';
 
@@ -408,17 +409,57 @@ test('mentions a new version from GitHub, links to it and can put the note away'
     await expect(note).toHaveCount(0);
     expect(requests).toEqual(['mJournal']);
 
-    // After a restart: no new request so soon, the note stays away, and Settings still knows.
+    // After a restart: it asks again (every start does), the note stays away, and Settings still knows.
     await closeLikeUser(app);
     run = await launch(dataDir, { env });
     ({ app, page } = run);
+    await expect.poll(() => requests.length).toBe(2);
     await page.getByRole('link', { name: /^Settings/ }).click();
     await expect(page.locator('#settings-updates')).toContainText('mJournal 9.9.9 is out. You have');
     await expect(page.getByRole('status', { name: 'New version' })).toHaveCount(0);
-    expect(requests).toHaveLength(1);
   } finally {
     github.close();
   }
+});
+
+test('says once, after an update, whether it worked', async () => {
+  const dataDir = makeDataDir();
+  dirs.push(dataDir);
+  run = await launch(dataDir);
+  let { app, page } = run;
+  const version = await app.evaluate(({ app: electronApp }) => electronApp.getVersion());
+  await closeLikeUser(app);
+
+  // mJournal closed to install this version, and opened again in it.
+  writeInternalSetting(dataDir, 'pendingUpdate', { version, previous: '1.0.0' });
+  run = await launch(dataDir);
+  ({ app, page } = run);
+  const worked = page.getByRole('dialog', { name: 'The update worked' });
+  await expect(worked).toContainText(`mJournal was updated from 1.0.0 to ${version}.`);
+  await worked.getByRole('button', { name: 'OK' }).click();
+  await expect(worked).toHaveCount(0);
+  await closeLikeUser(app);
+
+  // Seen once is enough.
+  run = await launch(dataDir);
+  ({ app, page } = run);
+  expect((await callApi<{ result: unknown }>(page, 'updates', 'status')).result).toBeNull();
+  await expect(page.getByRole('dialog', { name: 'The update worked' })).toHaveCount(0);
+  await closeLikeUser(app);
+
+  // mJournal closed to install a newer version, but opened again in the old one.
+  writeInternalSetting(dataDir, 'pendingUpdate', { version: '99.0.0', previous: version });
+  run = await launch(dataDir);
+  ({ app, page } = run);
+  const failed = page.getByRole('dialog', { name: 'The update didn’t work' });
+  await expect(failed).toContainText('mJournal 99.0.0 wasn’t installed.');
+  await expect(failed).toContainText(`You still have mJournal ${version}`);
+  // This copy can't install updates itself (a development build), so only GitHub is offered.
+  await expect(failed.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+  await expect(failed.getByRole('button', { name: 'Get it from GitHub' })).toBeVisible();
+  await failed.getByRole('button', { name: 'Not now' }).click();
+  await expect(failed).toHaveCount(0);
+  expect((await callApi<{ result: unknown }>(page, 'updates', 'status')).result).toBeNull();
 });
 
 test('can be used with the keyboard alone', async () => {

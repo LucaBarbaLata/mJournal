@@ -407,9 +407,9 @@ function UpdateSettings() {
         <div>
           <h3>Check for new versions</h3>
           <p className="muted">
-            About once a day, mJournal asks GitHub whether a newer version is out. That’s the only thing it asks the
-            internet by itself: nothing about you or your journal is sent, and a new version is downloaded and installed
-            only when you click <em>Update</em>.
+            Each time it starts, and about once a day while it stays open, mJournal asks GitHub whether a newer version
+            is out. That’s the only thing it asks the internet by itself: nothing about you or your journal is sent, and
+            a new version is downloaded and installed only when you click <em>Update</em>.
           </p>
         </div>
         <label className="switch">

@@ -1,9 +1,11 @@
 /**
  * The update check: the one thing mJournal asks the internet by itself, and only
- * while "Check for new versions" is on (or when the person clicks "Check now").
+ * while "Check for new versions" is on (or when the person clicks "Check now"):
+ * once each time mJournal starts, then about once a day while it stays open.
  * It reads which version was released last on GitHub and compares version
  * numbers. A new version is downloaded and installed only when the person
- * clicks "Update" (main/services/updateInstaller.ts).
+ * clicks "Update" (main/services/updateInstaller.ts); afterwards a window says
+ * whether that worked.
  */
 
 /** The GitHub repository mJournal is released from. */
@@ -13,7 +15,7 @@ export const LATEST_RELEASE_API = `https://api.github.com/repos/${RELEASES_REPO}
 /** Where a person downloads the new version. */
 export const RELEASES_PAGE = `https://github.com/${RELEASES_REPO}/releases/latest`;
 
-/** Automatic checks happen at most this often, also across restarts. */
+/** While mJournal stays open, it checks again this long after the last answer (every start checks once too). */
 export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export type UpdateState =
@@ -32,6 +34,21 @@ export type UpdateState =
  */
 export type InstallKind = 'windows' | 'appimage' | 'deb';
 
+/**
+ * How the last update went, shown once in a window: after mJournal has opened again in the new version, or right
+ * away when installing failed while mJournal was still open.
+ */
+export interface UpdateResult {
+  /** 'installed': mJournal now runs `version` (or something newer). 'failed': it doesn't. */
+  outcome: 'installed' | 'failed';
+  /** The version that was being installed. */
+  version: string;
+  /** The version that ran when the update started. */
+  previous: string;
+  /** Why it failed, when mJournal knows; otherwise null. */
+  error: string | null;
+}
+
 export interface UpdateStatus {
   state: UpdateState;
   /** The version that is running. */
@@ -46,6 +63,8 @@ export interface UpdateStatus {
   progress: number | null;
   /** Why the last try to install failed, or null. */
   installError: string | null;
+  /** How the last update went, until the person has closed the window that says so; otherwise null. */
+  result: UpdateResult | null;
 }
 
 const VERSION_RE = /^v?(\d{1,5})\.(\d{1,5})\.(\d{1,5})$/;

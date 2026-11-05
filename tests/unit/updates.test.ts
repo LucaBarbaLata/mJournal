@@ -10,7 +10,13 @@ import {
   type UpdateStatus,
 } from '@core/updates';
 import { UserFacingError } from '@core/validation';
-import { RETRY_AFTER_FAILURE_MS, UpdateChecker, type SavedUpdateCheck, type UpdateInstall } from '../../src/main/services/updates';
+import {
+  RETRY_AFTER_FAILURE_MS,
+  UpdateChecker,
+  type PendingUpdate,
+  type SavedUpdateCheck,
+  type UpdateInstall,
+} from '../../src/main/services/updates';
 
 describe('version numbers', () => {
   it('reads plain and v-prefixed versions, and nothing else', () => {
@@ -109,6 +115,7 @@ describe('UpdateChecker', () => {
       installer: null,
       progress: null,
       installError: null,
+      result: null,
     });
     expect(saved).toEqual({ checkedAt: START.toISOString(), released: '1.1.0' });
     expect(changes.map((c) => c.state)).toEqual(['checking', 'available']);
@@ -157,14 +164,42 @@ describe('UpdateChecker', () => {
     updates.stop();
   });
 
-  it('doesn’t ask again on every start when it asked recently', async () => {
-    saved = { checkedAt: new Date(START.getTime() - 2 * 60 * 60 * 1000).toISOString(), released: '1.0.0' };
-    const { updates, fetch } = checker(async () => ({ tag_name: 'v1.0.0' }));
-    updates.start(10_000);
-    await wait(CHECK_INTERVAL_MS - 2 * 60 * 60 * 1000 - 1_000);
+  it('asks on every start, even when it asked a moment ago, then a day after that', async () => {
+    saved = { checkedAt: new Date(START.getTime() - 5 * 60 * 1000).toISOString(), released: '1.0.0' };
+    const { updates, fetch } = checker(async () => ({ tag_name: 'v1.1.0' }));
+    updates.start(3_000);
+    await wait(2_999);
     expect(fetch).not.toHaveBeenCalled();
-    await wait(1_000);
+    await wait(1);
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(updates.status()).toMatchObject({ state: 'available', latest: '1.1.0' });
+    await wait(CHECK_INTERVAL_MS - 1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await wait(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    updates.stop();
+  });
+
+  it('checks soon after automatic checks are turned on, even when it asked recently before this start', async () => {
+    enabled = false;
+    saved = { checkedAt: new Date(START.getTime() - 5 * 60 * 1000).toISOString(), released: '1.0.0' };
+    const { updates, fetch } = checker(async () => ({ tag_name: 'v1.0.0' }));
+    updates.start(3_000);
+    await wait(60_000);
+    expect(fetch).not.toHaveBeenCalled();
+    enabled = true;
+    updates.settingsChanged();
+    await wait(3_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    // Off and on again after that: this start has asked already, so the next check is a day after the answer.
+    enabled = false;
+    updates.settingsChanged();
+    enabled = true;
+    updates.settingsChanged();
+    await wait(CHECK_INTERVAL_MS - 1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await wait(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
     updates.stop();
   });
 
@@ -187,16 +222,25 @@ describe('UpdateChecker', () => {
   });
 
   describe('installing', () => {
-    function installing(install: UpdateInstall['install']) {
+    let pending: PendingUpdate | null | undefined;
+    beforeEach(() => {
+      pending = undefined;
+    });
+
+    function installing(install: UpdateInstall['install'], currentVersion = '1.0.0') {
       const fetch = vi.fn(async () => ({ tag_name: 'v1.1.0' }));
       const installer: UpdateInstall = { kind: 'windows', install: vi.fn(install) };
       const updates = new UpdateChecker({
-        currentVersion: '1.0.0',
+        currentVersion,
         fetchLatestRelease: fetch,
         enabled: () => true,
         load: () => saved,
         save: (check) => {
           saved = check;
+        },
+        loadPending: () => pending,
+        savePending: (next) => {
+          pending = next;
         },
         onChange: (status) => changes.push(status),
         installer,
@@ -221,8 +265,9 @@ describe('UpdateChecker', () => {
         ['downloading', 1],
         ['installing', null],
       ]);
-      // mJournal is closing; it stays "installing" until it has.
-      expect(status).toMatchObject({ state: 'installing', latest: '1.1.0' });
+      // mJournal is closing; it stays "installing" until it has. The next start says how it went.
+      expect(status).toMatchObject({ state: 'installing', latest: '1.1.0', result: null });
+      expect(pending).toEqual({ version: '1.1.0', previous: '1.0.0' });
       expect(await updates.install()).toMatchObject({ state: 'installing' });
       expect(installer.install).toHaveBeenCalledTimes(1);
     });
@@ -235,10 +280,61 @@ describe('UpdateChecker', () => {
         throw new Error('disk on fire');
       });
       await updates.check();
-      expect(await updates.install()).toMatchObject({ state: 'available', installError: 'The download stopped.' });
+      expect(await updates.install()).toMatchObject({
+        state: 'available',
+        installError: 'The download stopped.',
+        result: { outcome: 'failed', version: '1.1.0', previous: '1.0.0', error: 'The download stopped.' },
+      });
       // Anything that isn't meant for the person gets a general message.
       expect((await updates.install()).installError).toMatch(/couldn’t be installed/);
+      expect(updates.status().result?.error).toMatch(/couldn’t be installed/);
       expect(attempt).toBe(2);
+      // mJournal stayed open and said so, so the next start has nothing to report.
+      expect(pending).toBeNull();
+    });
+
+    it('forgets the update it started when installing fails after the download', async () => {
+      const { updates } = installing(async (_version, progress) => {
+        progress.installing();
+        expect(pending).toEqual({ version: '1.1.0', previous: '1.0.0' });
+        throw new UserFacingError('update-install', 'The update wasn’t installed: installing it needs your password.');
+      });
+      await updates.check();
+      expect((await updates.install()).result).toMatchObject({ outcome: 'failed', error: expect.stringMatching(/password/) });
+      expect(pending).toBeNull();
+    });
+
+    it('says after the next start that the update worked, until the person has seen it', () => {
+      pending = { version: '1.1.0', previous: '1.0.0' };
+      const { updates } = installing(async () => undefined, '1.1.0');
+      expect(updates.status().result).toEqual({ outcome: 'installed', version: '1.1.0', previous: '1.0.0', error: null });
+      changes = [];
+      expect(updates.dismissResult().result).toBeNull();
+      expect(changes).toHaveLength(1);
+      expect(pending).toBeNull();
+      expect(installing(async () => undefined, '1.1.0').updates.status().result).toBeNull();
+    });
+
+    it('counts a version newer than the one it installed as worked', () => {
+      pending = { version: '1.1.0', previous: '1.0.0' };
+      expect(installing(async () => undefined, '1.2.0').updates.status().result?.outcome).toBe('installed');
+    });
+
+    it('says after the next start that the update didn’t work when this is still the old version', async () => {
+      pending = { version: '1.1.0', previous: '1.0.0' };
+      const { updates, installer } = installing(async () => undefined);
+      expect(updates.status().result).toEqual({ outcome: 'failed', version: '1.1.0', previous: '1.0.0', error: null });
+      // Trying again replaces it.
+      await updates.check();
+      await updates.install();
+      expect(installer.install).toHaveBeenCalledTimes(1);
+      expect(updates.status().result).toBeNull();
+      expect(pending).toBeNull();
+    });
+
+    it('ignores a malformed remembered update', () => {
+      pending = { version: 'soon', previous: '1.0.0' } as PendingUpdate;
+      expect(installing(async () => undefined).updates.status().result).toBeNull();
     });
 
     it('does nothing without a newer version or a way to install it', async () => {

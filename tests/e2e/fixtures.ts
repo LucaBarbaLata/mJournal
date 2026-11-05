@@ -6,6 +6,7 @@ import { _electron as electron, type ElectronApplication, type Page } from '@pla
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { crc32, deflateSync } from 'node:zlib';
 
 export const ROOT = resolve(__dirname, '..', '..');
@@ -68,6 +69,19 @@ export async function closeLikeUser(app: ElectronApplication): Promise<void> {
   const closed = new Promise<void>((done) => app.process().once('exit', () => done()));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.close());
   await closed;
+}
+
+/** Writes one of mJournal's internal settings straight into the database of a journal that isn't open. */
+export function writeInternalSetting(dataDir: string, key: string, value: unknown): void {
+  const db = new DatabaseSync(join(dataDir, 'mjournal.db'));
+  try {
+    db.prepare(
+      `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ).run(`internal.${key}`, JSON.stringify(value), new Date().toISOString());
+  } finally {
+    db.close();
+  }
 }
 
 export function removeDir(dir: string): void {
