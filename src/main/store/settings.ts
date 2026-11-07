@@ -2,7 +2,7 @@
  * User settings (stored as JSON values per key) plus a few internal values
  * such as the window position. Malformed stored values fall back to defaults.
  */
-import type { Settings } from '@core/api';
+import { AUTO_BACKUP_KEEP, QUICK_NOTE_SHORTCUTS, TEXT_SIZES, type Settings } from '@core/api';
 import { isClockTime, UserFacingError, ValidationError } from '@core/validation';
 import type { Db } from './database';
 
@@ -22,6 +22,7 @@ const VALIDATORS: Validators = {
   dateFormat: oneOf('month-first', 'day-first', 'iso'),
   weekStartsOn: oneOf(0, 1, 6),
   writingFont: oneOf('serif', 'sans', 'hand'),
+  textSize: oneOf(...TEXT_SIZES),
   showStreaks: isBoolean,
   reduceMotion: isBoolean,
   autoSnapshots: isBoolean,
@@ -32,6 +33,12 @@ const VALIDATORS: Validators = {
     Array.isArray(v) && v.length <= 50 && v.every((id) => typeof id === 'string' && /^[a-z0-9-]{1,40}$/.test(id)),
   checkForUpdates: isBoolean,
   dismissedUpdate: (v): v is string => typeof v === 'string' && (v === '' || /^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(v)),
+  autoBackup: isBoolean,
+  autoBackupFrequency: oneOf('daily', 'weekly'),
+  autoBackupKeep: oneOf(...AUTO_BACKUP_KEEP),
+  keepInTray: isBoolean,
+  openAtLogin: isBoolean,
+  quickNoteShortcut: oneOf('', ...QUICK_NOTE_SHORTCUTS),
 };
 
 export function defaultSettings(regionCode: string): Settings {
@@ -42,6 +49,7 @@ export function defaultSettings(regionCode: string): Settings {
     dateFormat: monthFirst ? 'month-first' : 'day-first',
     weekStartsOn: ['US', 'CA', 'JP', 'BR', 'MX', 'PH', 'IL'].includes(regionCode.toUpperCase()) ? 0 : 1,
     writingFont: 'serif',
+    textSize: 100,
     showStreaks: true,
     reduceMotion: false,
     autoSnapshots: true,
@@ -51,6 +59,12 @@ export function defaultSettings(regionCode: string): Settings {
     dismissedTips: [],
     checkForUpdates: true,
     dismissedUpdate: '',
+    autoBackup: false,
+    autoBackupFrequency: 'weekly',
+    autoBackupKeep: 10,
+    keepInTray: false,
+    openAtLogin: false,
+    quickNoteShortcut: '',
   };
 }
 

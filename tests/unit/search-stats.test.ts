@@ -146,3 +146,103 @@ describe('statistics', () => {
     expect(journal.stats.yearInMoods(2026).days).toHaveLength(365);
   });
 });
+
+describe('search phrases and exclusions', () => {
+  it('keeps quoted words together and leaves out days with excluded words', async () => {
+    const journal = await sampleJournal();
+    journal.entries.update('2026-10-03', { body: 'A croissant in the rain' });
+    const dates = (text: string) => journal.search.search({ text }).results.map((r) => r.date);
+    expect(dates('croissant')).toEqual(['2026-10-03', '2026-09-02']);
+    expect(dates('croissant -rain')).toEqual(['2026-09-02']);
+    expect(dates('"new café"')).toEqual(['2026-09-02']);
+    expect(dates('"café new"')).toEqual([]);
+    expect(dates('-rain')).toEqual(journal.search.search({}).results.map((r) => r.date)); // nothing to look for: everything
+  });
+});
+
+describe('searching reflections and letters', () => {
+  it('finds monthly and yearly reflections, newest first, within the chosen dates', () => {
+    const journal = openJournal();
+    journal.reflections.save('2026-03', 'learned', 'Walking every morning helps');
+    journal.reflections.save('2026-09', 'letter', 'Dear me, keep walking');
+    journal.years.save(2025, 'proud', 'I walked the whole coast');
+    const hits = (text: string, range = {}) => journal.writing.search(text, range).map((h) => `${h.kind}:${h.ref}`);
+    expect(hits('walk')).toEqual(['month:2026-09', 'month:2026-03', 'year:2025']);
+    expect(hits('walk', { from: '2026-06-01' })).toEqual(['month:2026-09']);
+    expect(hits('walk', { to: '2025-12-31' })).toEqual(['year:2025']);
+    expect(journal.writing.search('coast')[0].snippet).toContain(`${HIGHLIGHT_START}coast${HIGHLIGHT_END}`);
+    // Changing an answer replaces what is found.
+    journal.reflections.save('2026-03', 'learned', 'Swimming helps');
+    expect(hits('walking')).toEqual(['month:2026-09']);
+    expect(hits('swimming')).toEqual(['month:2026-03']);
+  });
+});
+
+describe('the year in review', () => {
+  it('counts the year, month by month, with each month’s intention', async () => {
+    const journal = openJournal();
+    journal.entries.update('2026-01-05', { body: 'New year walk', mood: 'happy', energy: 4 });
+    journal.entries.update('2026-01-06', { mood: 'happy' });
+    journal.entries.update('2026-03-10', { mood: 'calm', energy: 2, favorite: true });
+    journal.entries.update('2025-12-31', { mood: 'tired' }); // another year
+    journal.reflections.save('2026-01', 'intention', 'Slow mornings');
+    journal.tags.setForDay('2026-03-10', 'Walk', true);
+    const { imported } = await journal.photos.importSources('2026-03-10', [{ name: 'a.png', data: PNG_1PX }]);
+    journal.photos.update(imported[0].id, { favorite: true });
+    journal.years.save(2026, 'proud', 'Kept going');
+
+    const recap = journal.years.recap(2026);
+    expect(recap).toMatchObject({
+      year: 2026,
+      daysInYear: 365,
+      daysWithEntries: 3,
+      moodCounts: [
+        { mood: 'happy', count: 2 },
+        { mood: 'calm', count: 1 },
+      ],
+      averageEnergy: 3,
+      energyDays: 2,
+      photoCount: 1,
+      tags: [{ label: 'Walk', count: 1 }],
+      reflection: { proud: 'Kept going' },
+    });
+    expect(recap.months).toHaveLength(12);
+    expect(recap.months[0]).toEqual({ month: '2026-01', days: 2, topMood: 'happy', intention: 'Slow mornings' });
+    expect(recap.months[2]).toMatchObject({ days: 1, topMood: 'calm', intention: '' });
+    expect(recap.moments.map((m) => [m.date, m.kind])).toEqual([['2026-03-10', 'favorite-day']]);
+    expect(recap.photos.map((p) => p.id)).toEqual([imported[0].id]);
+    expect(journal.writing.search('going')).toMatchObject([{ kind: 'year', ref: '2026' }]);
+    expect(() => journal.years.save(2026, 'not-a-question', 'x')).toThrow(/unknown/);
+    expect(journal.years.recap(2024).daysInYear).toBe(366);
+  });
+
+  it('keeps a mix of moments spread over the year', () => {
+    const journal = openJournal();
+    for (let month = 1; month <= 12; month++) {
+      journal.entries.update(`2026-${String(month).padStart(2, '0')}-15`, { body: `Day ${month}`, favorite: true });
+    }
+    const moments = journal.years.recap(2026).moments;
+    // At most six favorite days, spread from January to December.
+    expect(moments.filter((m) => m.kind === 'favorite-day').map((m) => m.date.slice(5, 7))).toEqual(['01', '03', '05', '08', '10', '12']);
+  });
+});
+
+describe('more gentle insights', () => {
+  it('count moods by weekday, energy by mood, words and photos per month, and tags', async () => {
+    const journal = openJournal();
+    journal.entries.update('2026-10-19', { mood: 'happy', energy: 4, body: 'one two three' }); // a Monday
+    journal.entries.update('2026-10-26', { mood: 'happy', energy: 2 }); // a Monday
+    journal.entries.update('2026-10-24', { mood: 'calm' }); // a Saturday, no energy
+    journal.tags.setForDay('2026-10-24', 'Walk', true);
+    journal.tags.setForDay('2026-10-19', 'Walk', true);
+    await journal.photos.importSources('2026-10-24', [{ name: 'a.png', data: PNG_1PX }]);
+    const s = journal.stats.overview('2026-10-31', 'month');
+    expect(s.moodByWeekday).toHaveLength(7);
+    expect(s.moodByWeekday[1]).toEqual({ weekday: 1, total: 2, counts: { happy: 2 } });
+    expect(s.moodByWeekday[6]).toEqual({ weekday: 6, total: 1, counts: { calm: 1 } });
+    expect(s.energyByMood).toEqual([{ mood: 'happy', average: 3, days: 2 }]);
+    expect(s.wordsByMonth.at(-1)).toEqual({ month: '2026-10', words: 3 });
+    expect(s.photosByMonth.at(-1)).toEqual({ month: '2026-10', count: 1 });
+    expect(s.tagCounts).toEqual([{ tag: 'walk', label: 'Walk', count: 2 }]);
+  });
+});

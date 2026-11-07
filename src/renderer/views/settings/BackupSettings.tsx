@@ -1,6 +1,10 @@
-/** Backups, restore and exports. Restoring is explicit, explained and reversible. */
+/**
+ * Backups, restore and exports. Restoring is explicit, explained and reversible. Automatic backups go to a
+ * folder the person chose; a backup password protects every new backup (the key stays on this computer).
+ */
 import { useState } from 'react';
-import type { BackupInspection, RestoreResult } from '@core/api';
+import { AUTO_BACKUP_KEEP, type BackupInspection, type BackupStatus, type RestoreResult } from '@core/api';
+import { todayKey } from '@core/dates';
 import { Dialog } from '../../components/Dialog';
 import { Icon } from '../../components/Icon';
 import { toast } from '../../components/Toasts';
@@ -8,7 +12,7 @@ import { api, errorMessage } from '../../lib/api';
 import { useApp } from '../../lib/app';
 import { invalidate, useQuery } from '../../lib/data';
 import { saveQueue } from '../../lib/saveQueue';
-import { SettingsSection } from '../SettingsView';
+import { Segmented, SettingsSection } from '../SettingsView';
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -17,15 +21,25 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
+/** The minimum the main process accepts too (services/backupCrypto.ts). */
+const MIN_PASSWORD = 8;
+
 export function BackupSettings() {
   const { settings, updateSettings, format } = useApp();
   const info = useQuery('data-info', () => api.data.info(), ['data', 'entries', 'photos']);
+  const status = useQuery('backup-status', () => api.data.backupStatus(), ['data', 'settings']);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inspection, setInspection] = useState<BackupInspection | null>(null);
   const [understood, setUnderstood] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [restored, setRestored] = useState<RestoreResult | null>(null);
+  // A password-protected backup waiting for its password.
+  const [locked, setLocked] = useState<{ token: string; fileName: string } | null>(null);
+  const [unlockPassword, setUnlockPassword] = useState('');
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [choosingSnapshot, setChoosingSnapshot] = useState(false);
+  const [passwordDialog, setPasswordDialog] = useState(false);
 
   const action = async (name: string, run: () => Promise<void>) => {
     setBusy(name);
@@ -63,14 +77,51 @@ export function BackupSettings() {
       });
     });
 
+  const showInspection = (result: BackupInspection) => {
+    setUnderstood(false);
+    setRestoreError(null);
+    setInspection(result);
+  };
+
   const chooseBackup = () =>
     action('inspect', async () => {
       const result = await api.data.inspectBackup();
-      if (result) {
-        setUnderstood(false);
-        setRestoreError(null);
-        setInspection(result);
+      if (!result) return;
+      if ('needsPassword' in result) {
+        setUnlockPassword('');
+        setUnlockError(null);
+        setLocked({ token: result.token, fileName: result.fileName });
+      } else {
+        showInspection(result);
       }
+    });
+
+  const unlock = async () => {
+    if (!locked) return;
+    setBusy('unlock');
+    setUnlockError(null);
+    try {
+      const result = await api.data.unlockBackup(locked.token, unlockPassword);
+      setLocked(null);
+      setUnlockPassword('');
+      showInspection(result);
+    } catch (err) {
+      setUnlockError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const cancelUnlock = () => {
+    if (locked) void api.data.cancelRestore(locked.token).catch(() => undefined);
+    setLocked(null);
+    setUnlockPassword('');
+  };
+
+  const chooseSnapshot = (name: string) =>
+    action('inspect', async () => {
+      setChoosingSnapshot(false);
+      showInspection(await api.data.inspectSnapshot(name));
     });
 
   const cancelRestore = () => {
@@ -95,6 +146,7 @@ export function BackupSettings() {
   };
 
   const snapshots = info.data?.snapshots ?? [];
+  const isSnapshot = inspection?.kind === 'snapshot';
 
   return (
     <SettingsSection
@@ -105,7 +157,15 @@ export function BackupSettings() {
       <div className="setting-row">
         <div>
           <h3>Complete backup</h3>
-          <p className="muted">One .zip file with all your days, moods, monthly reflections, settings and photos.</p>
+          <p className="muted">
+            One file with all your days, moods, monthly reflections, settings and photos.
+            {status.data?.encrypted ? ' It is protected with your backup password.' : ''}
+          </p>
+          {status.data?.lastBackupAt && (
+            <p className="muted snapshot-line">
+              Last complete backup: {format.medium(todayKey(new Date(status.data.lastBackupAt)))} at {format.time(status.data.lastBackupAt)}
+            </p>
+          )}
         </div>
         <button type="button" className="btn btn-primary" disabled={busy !== null} onClick={() => void createBackup()}>
           {busy === 'backup' ? <span className="spinner" aria-hidden="true" /> : <Icon name="download" size={16} />} Create backup…
@@ -144,12 +204,46 @@ export function BackupSettings() {
         </p>
       )}
 
+      {status.data && <AutomaticBackups status={status.data} onChanged={() => invalidate('data')} />}
+
+      <div className="setting-row">
+        <div>
+          <h3>Password for backups</h3>
+          <p className="muted">
+            {status.data?.encrypted
+              ? 'New backups are protected with your password: without it, nobody can open them. Backups made earlier keep the password (or none) they were made with.'
+              : 'Backups aren’t protected yet: anyone who finds one could read it. A password keeps a backup on a USB stick or in a cloud folder private.'}
+          </p>
+        </div>
+        <div className="option-buttons">
+          <button type="button" className="btn" onClick={() => setPasswordDialog(true)}>
+            <Icon name="key" size={16} /> {status.data?.encrypted ? 'Change password…' : 'Set a password…'}
+          </button>
+          {status.data?.encrypted && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() =>
+                void action('password', async () => {
+                  await api.data.setBackupPassword(null);
+                  invalidate('data');
+                  toast('New backups won’t be protected with a password');
+                })
+              }
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="setting-row">
         <div>
           <h3>Daily safety snapshots</h3>
           <p className="muted">
-            Once a day mJournal keeps a copy of its database (your writing, moods and settings) in the backups folder. The ten
-            newest are kept. Photos aren’t copied here — use a complete backup for those.
+            Once a day mJournal keeps a copy of its database (your writing, moods and settings) in the backups folder, also
+            while it stays open. The newest copy of each of the last 7 days, 4 weeks and 6 months is kept. Photos aren’t
+            copied here — use a complete backup for those.
           </p>
           {snapshots.length > 0 && (
             <p className="muted snapshot-line">
@@ -167,15 +261,106 @@ export function BackupSettings() {
           <span className="visually-hidden">Daily safety snapshots</span>
         </label>
       </div>
-      <button type="button" className="btn btn-ghost btn-sm align-start" onClick={() => void api.data.openFolder('backups')}>
-        <Icon name="folder" size={15} /> Open backups folder
-      </button>
+      <div className="row-actions align-start">
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={snapshots.length === 0 || busy !== null}
+          onClick={() => setChoosingSnapshot(true)}
+        >
+          <Icon name="restore" size={15} /> Restore a snapshot…
+        </button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => void api.data.openFolder('backups')}>
+          <Icon name="folder" size={15} /> Open backups folder
+        </button>
+      </div>
+
+      <PasswordDialog open={passwordDialog} change={Boolean(status.data?.encrypted)} onClose={() => setPasswordDialog(false)} />
+
+      <Dialog
+        open={choosingSnapshot}
+        onClose={() => setChoosingSnapshot(false)}
+        title="Restore a snapshot"
+        actions={
+          <button type="button" className="btn btn-ghost" onClick={() => setChoosingSnapshot(false)}>
+            Cancel
+          </button>
+        }
+      >
+        <p className="muted">
+          A snapshot puts back your writing, moods, reflections and settings as they were then. Photos stay as they are now.
+          Nothing changes until you confirm on the next step.
+        </p>
+        <ul className="snapshot-list">
+          {snapshots.map((s) => (
+            <li key={s.name}>
+              <span>
+                <strong>
+                  {format.medium(todayKey(new Date(s.createdAt)))} at {format.time(s.createdAt)}
+                </strong>
+                <span className="muted">
+                  {' '}
+                  · {formatBytes(s.bytes)}
+                  {s.name.includes('before-migration') ? ' · before an upgrade' : ''}
+                </span>
+              </span>
+              <button type="button" className="btn btn-sm" onClick={() => void chooseSnapshot(s.name)}>
+                Choose
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Dialog>
+
+      <Dialog
+        open={locked !== null}
+        onClose={cancelUnlock}
+        dismissible={busy !== 'unlock'}
+        title="This backup has a password"
+        actions={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={cancelUnlock} disabled={busy === 'unlock'}>
+              Cancel
+            </button>
+            <button type="submit" form="unlock-backup" className="btn btn-primary" disabled={!unlockPassword || busy === 'unlock'}>
+              {busy === 'unlock' && <span className="spinner" aria-hidden="true" />} Open backup
+            </button>
+          </>
+        }
+      >
+        <form
+          id="unlock-backup"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void unlock();
+          }}
+        >
+          <p className="muted">{locked?.fileName} is protected. Enter the password it was made with.</p>
+          <label className="field">
+            <span className="field-label">Backup password</span>
+            <input
+              className="input"
+              type="password"
+              autoComplete="off"
+              autoFocus
+              value={unlockPassword}
+              onChange={(event) => setUnlockPassword(event.target.value)}
+            />
+          </label>
+          {unlockError && (
+            <p className="notice error" role="alert">
+              <Icon name="info" size={16} />
+              <span>{unlockError}</span>
+            </p>
+          )}
+        </form>
+      </Dialog>
 
       <Dialog
         open={inspection !== null}
         onClose={cancelRestore}
         dismissible={busy !== 'restore'}
-        title="Restore this backup?"
+        title={isSnapshot ? 'Restore this snapshot?' : 'Restore this backup?'}
         actions={
           <>
             <button type="button" className="btn btn-ghost" onClick={cancelRestore} disabled={busy === 'restore'}>
@@ -191,18 +376,22 @@ export function BackupSettings() {
           <>
             <p className="notice info">
               <Icon name="check" size={16} />
-              <span>This backup passed its checks: every file is intact and readable.</span>
+              <span>
+                {isSnapshot ? 'This snapshot passed its checks.' : 'This backup passed its checks: every file is intact and readable.'}
+                {inspection.encrypted ? ' It was protected with a password.' : ''}
+              </span>
             </p>
             <dl className="restore-compare">
               <div>
-                <dt>In the backup</dt>
+                <dt>{isSnapshot ? 'In the snapshot' : 'In the backup'}</dt>
                 <dd>
                   <strong>{inspection.counts.entries}</strong> days · <strong>{inspection.counts.photos}</strong> photos ·{' '}
                   <strong>{inspection.counts.monthlyReflections}</strong> monthly reflections
                 </dd>
                 <dd className="muted">
-                  Made {format.medium(inspection.createdAt.slice(0, 10))} with mJournal {inspection.appVersion} ·{' '}
-                  {formatBytes(inspection.bytes)} · {inspection.fileName}
+                  {isSnapshot ? 'Taken' : 'Made'} {format.medium(todayKey(new Date(inspection.createdAt)))}
+                  {inspection.appVersion ? ` with mJournal ${inspection.appVersion}` : ''} · {formatBytes(inspection.bytes)} ·{' '}
+                  {inspection.fileName}
                 </dd>
               </div>
               <div>
@@ -223,12 +412,22 @@ export function BackupSettings() {
               </div>
             )}
             <p>
-              Restoring <strong>replaces</strong> your current journal with the backup — the two are not merged. Your current
-              journal won’t be deleted: it is moved to the backups folder first, so you can go back to it.
+              {isSnapshot ? (
+                <>
+                  Restoring <strong>replaces</strong> your writing, moods, reflections and settings with this snapshot. Your
+                  photos stay as they are. Your current journal’s database won’t be deleted: it is moved to the backups folder
+                  first, so you can go back to it.
+                </>
+              ) : (
+                <>
+                  Restoring <strong>replaces</strong> your current journal with the backup — the two are not merged. Your
+                  current journal won’t be deleted: it is moved to the backups folder first, so you can go back to it.
+                </>
+              )}
             </p>
             <label className="check">
               <input type="checkbox" checked={understood} onChange={(event) => setUnderstood(event.target.checked)} />
-              I understand my current journal will be replaced by this backup.
+              I understand my current journal will be replaced by this {isSnapshot ? 'snapshot' : 'backup'}.
             </label>
             {restoreError && (
               <p className="notice error" role="alert">
@@ -250,7 +449,7 @@ export function BackupSettings() {
           </button>
         }
       >
-        <p>Everything from the backup is back in place.</p>
+        <p>Everything is back in place.</p>
         {restored && (
           <p className="muted">
             Your previous journal was kept here, in case you need it:
@@ -260,5 +459,254 @@ export function BackupSettings() {
         )}
       </Dialog>
     </SettingsSection>
+  );
+}
+
+/** Automatic complete backups into a folder the person chose. */
+function AutomaticBackups({ status, onChanged }: { status: BackupStatus; onChanged: () => void }) {
+  const { settings, updateSettings, format } = useApp();
+  const [busy, setBusy] = useState<'folder' | 'now' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (name: 'folder' | 'now', call: () => Promise<unknown>) => {
+    setBusy(name);
+    setError(null);
+    try {
+      await call();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+      onChanged();
+    }
+  };
+
+  const when = (iso: string) => `${format.medium(todayKey(new Date(iso)))} at ${format.time(iso)}`;
+
+  return (
+    <div className="auto-backup" id="settings-auto-backup">
+      <div className="setting-row">
+        <div>
+          <h3>Automatic backups</h3>
+          <p className="muted">
+            mJournal makes a complete backup by itself into a folder you choose — a USB drive, another disk, or a folder
+            your own sync app looks after. It backs up while it’s open; if a backup was due while it was closed, it
+            catches up a minute after starting. mJournal itself still never goes online.
+          </p>
+        </div>
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={settings.autoBackup}
+            onChange={(event) => void updateSettings({ autoBackup: event.target.checked }).then(onChanged)}
+          />
+          <span className="visually-hidden">Automatic backups</span>
+        </label>
+      </div>
+      <div className="auto-backup-folder">
+        <span className="field-label">Folder</span>
+        {status.folder ? <code className="path">{status.folder}</code> : <span className="muted">No folder chosen yet.</span>}
+        <div className="row-actions">
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={busy !== null}
+            onClick={() => void run('folder', () => api.data.chooseBackupFolder())}
+          >
+            <Icon name="folder" size={15} /> {status.folder ? 'Change folder…' : 'Choose folder…'}
+          </button>
+          {status.folder && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={busy !== null}
+              onClick={() => void run('folder', () => api.data.clearBackupFolder())}
+            >
+              Forget this folder
+            </button>
+          )}
+        </div>
+        {status.folder && !status.folderAvailable && (
+          <p className="notice">
+            <Icon name="info" size={16} />
+            <span>This folder can’t be reached right now. If it’s on a drive, plug it in — mJournal tries again every hour.</span>
+          </p>
+        )}
+      </div>
+      <div className="setting-row">
+        <div>
+          <h3>How often</h3>
+        </div>
+        <Segmented<'daily' | 'weekly'>
+          label="How often"
+          value={settings.autoBackupFrequency}
+          onChange={(value) => void updateSettings({ autoBackupFrequency: value }).then(onChanged)}
+          options={[
+            { value: 'daily', label: 'Every day' },
+            { value: 'weekly', label: 'Every week' },
+          ]}
+        />
+      </div>
+      <div className="setting-row">
+        <div>
+          <h3>Backups to keep</h3>
+          <p className="muted">Older automatic backups in the folder are deleted. Nothing else in it is ever touched.</p>
+        </div>
+        <Segmented<string>
+          label="Backups to keep"
+          value={String(settings.autoBackupKeep)}
+          onChange={(value) =>
+            void updateSettings({ autoBackupKeep: Number(value) as (typeof AUTO_BACKUP_KEEP)[number] }).then(onChanged)
+          }
+          options={AUTO_BACKUP_KEEP.map((n) => ({ value: String(n), label: String(n) }))}
+        />
+      </div>
+      <div className="update-row">
+        <p className="update-status" aria-live="polite">
+          {status.running || busy === 'now'
+            ? 'Backing up…'
+            : status.lastAuto
+              ? `Last automatic backup: ${when(status.lastAuto.at)} (${formatBytes(status.lastAuto.bytes)}).`
+              : 'No automatic backup yet.'}
+          {settings.autoBackup && status.nextDueAt && !status.running && busy !== 'now' && status.lastAuto
+            ? ` Next one: ${when(status.nextDueAt)} or soon after.`
+            : ''}
+        </p>
+        <button
+          type="button"
+          className="btn"
+          disabled={!status.folder || busy !== null || status.running}
+          onClick={() => void run('now', () => api.data.backUpNow())}
+        >
+          {busy === 'now' ? <span className="spinner" aria-hidden="true" /> : <Icon name="download" size={16} />} Back up now
+        </button>
+      </div>
+      {status.lastError && !error && (
+        <p className="notice error" role="alert">
+          <Icon name="info" size={16} />
+          <span>
+            The automatic backup on {when(status.lastError.at)} didn’t work: {status.lastError.message}
+          </span>
+        </p>
+      )}
+      {error && (
+        <p className="notice error" role="alert">
+          <Icon name="info" size={16} />
+          <span>{error}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Sets or changes the backup password. There's no way to recover it, so it's asked twice. */
+function PasswordDialog({ open, change, onClose }: { open: boolean; change: boolean; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [again, setAgain] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const close = () => {
+    setPassword('');
+    setAgain('');
+    setSaved(false);
+    setError(null);
+    onClose();
+  };
+
+  const tooShort = password.length > 0 && password.length < MIN_PASSWORD;
+  const mismatch = again.length > 0 && again !== password;
+  const ready = password.length >= MIN_PASSWORD && again === password && saved && !busy;
+
+  const submit = async () => {
+    if (!ready) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.data.setBackupPassword(password);
+      invalidate('data');
+      toast(change ? 'New backups use your new password' : 'New backups are protected with your password');
+      close();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onClose={close}
+      dismissible={!busy}
+      title={change ? 'Change the backup password' : 'Protect backups with a password'}
+      actions={
+        <>
+          <button type="button" className="btn btn-ghost" onClick={close} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" form="backup-password" className="btn btn-primary" disabled={!ready}>
+            {busy && <span className="spinner" aria-hidden="true" />} {change ? 'Change password' : 'Protect backups'}
+          </button>
+        </>
+      }
+    >
+      <form
+        id="backup-password"
+        className="password-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <p className="muted">
+          Every new backup — made by hand or automatically — is encrypted with this password. You’ll need it to restore a
+          backup on another computer. A few words in a row make a good one.
+        </p>
+        <p className="notice">
+          <Icon name="info" size={16} />
+          <span>
+            <strong>If you forget this password, protected backups can’t be opened</strong> — not by you, and not by mJournal.
+            {change ? ' Backups made earlier still need the password they were made with.' : ''}
+          </span>
+        </p>
+        <label className="field">
+          <span className="field-label">Password</span>
+          <input
+            className="input"
+            type="password"
+            autoComplete="new-password"
+            autoFocus
+            value={password}
+            aria-invalid={tooShort || undefined}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          {tooShort && <span className="field-hint">At least {MIN_PASSWORD} characters.</span>}
+        </label>
+        <label className="field">
+          <span className="field-label">The same password again</span>
+          <input
+            className="input"
+            type="password"
+            autoComplete="new-password"
+            value={again}
+            aria-invalid={mismatch || undefined}
+            onChange={(event) => setAgain(event.target.value)}
+          />
+          {mismatch && <span className="field-hint">The two passwords aren’t the same yet.</span>}
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={saved} onChange={(event) => setSaved(event.target.checked)} />
+          I’ve saved this password somewhere safe.
+        </label>
+        {error && (
+          <p className="notice error" role="alert">
+            <Icon name="info" size={16} />
+            <span>{error}</span>
+          </p>
+        )}
+      </form>
+    </Dialog>
   );
 }

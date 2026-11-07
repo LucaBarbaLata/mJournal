@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -147,6 +147,56 @@ test('adds photos with the same file name, makes thumbnails and shows them in Me
   expect(existsSync(a) && existsSync(b)).toBe(true);
 });
 
+test('reorders photos and moves one to another day from the photo viewer', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page } = run;
+  const images = makeDataDir();
+  dirs.push(images);
+  await callApi(page, 'photos', 'importFiles', localDateKey(), [
+    writeImage(images, 'first.png', [240, 180, 190]),
+    writeImage(images, 'second.png', [170, 200, 160]),
+  ]);
+  await page.reload();
+  await page.waitForSelector('.app');
+  const names = async (date: string) =>
+    (await callApi<{ photos: { originalName: string }[] }>(page, 'entries', 'getDay', date)).photos.map((p) => p.originalName);
+  await expect(page.locator('.day-photos .photo-tile')).toHaveCount(2);
+
+  await page.locator('.day-photos .photo-tile').first().click();
+  await page.getByRole('button', { name: /Move later/ }).click();
+  await expect.poll(() => names(localDateKey())).toEqual(['second.png', 'first.png']);
+  // The viewer follows the photo to its new place.
+  await expect(page.locator('dialog.lightbox .eyebrow').first()).toHaveText('2 of 2');
+
+  await page.getByRole('button', { name: /Move to another day/ }).click();
+  await page.getByLabel('Move this photo to').fill(localDateKey(-1));
+  await page.getByRole('button', { name: 'Move', exact: true }).click();
+  await expect(page.locator('.toast')).toContainText('Photo moved to');
+  await expect(page.locator('.day-photos .photo-tile')).toHaveCount(1);
+  expect(await names(localDateKey(-1))).toEqual(['first.png']);
+  expect(await names(localDateKey())).toEqual(['second.png']);
+});
+
+test('makes the text larger with Ctrl + = and keeps it after a restart', async () => {
+  const dataDir = makeDataDir();
+  dirs.push(dataDir);
+  run = await launch(dataDir);
+  const zoom = (launched: Launched) =>
+    launched.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getZoomFactor());
+  await run.page.keyboard.press('Control+Equal');
+  await expect.poll(() => zoom(run!)).toBeCloseTo(1.1);
+  expect((await callApi<{ textSize: number }>(run.page, 'settings', 'get')).textSize).toBe(110);
+  await closeLikeUser(run.app);
+
+  run = await launch(dataDir);
+  await expect.poll(() => zoom(run!)).toBeCloseTo(1.1);
+  await run.page.getByRole('link', { name: 'Settings' }).click();
+  await expect(run.page.getByRole('radio', { name: '110 %' })).toHaveAttribute('aria-checked', 'true');
+  await run.page.keyboard.press('Control+0');
+  await expect.poll(() => zoom(run!)).toBeCloseTo(1);
+});
+
 test('shows a gentle placeholder when a photo file is missing', async () => {
   run = await launch();
   dirs.push(run.dataDir);
@@ -239,6 +289,13 @@ test('creates a complete backup and restores it after confirmation', async () =>
   dirs.push(out);
   const backup = join(out, 'mJournal-backup-test.zip');
   await callApi(page, 'entries', 'update', localDateKey(), { body: 'The version worth keeping', mood: 'wonderful' });
+  const images = makeDataDir();
+  dirs.push(images);
+  await callApi(page, 'photos', 'importFiles', localDateKey(), [writeImage(images, 'kept.png', [220, 190, 230])]);
+  await page.reload();
+  await page.waitForSelector('.app');
+  const thumbnails = () => readdirSync(join(run!.dataDir, 'thumbnails')).length;
+  await expect.poll(thumbnails).toBe(1);
 
   await page.getByRole('link', { name: 'Settings' }).click();
   await stubSaveDialog(app, backup);
@@ -261,6 +318,12 @@ test('creates a complete backup and restores it after confirmation', async () =>
   await page.waitForSelector('.app');
   await page.getByRole('link', { name: 'Today' }).click();
   await expect(page.getByRole('textbox', { name: 'Free writing' })).toHaveValue('The version worth keeping');
+  // The restore starts with an empty thumbnails folder; the photo's thumbnail is made again.
+  await expect(page.locator('.day-photos .photo-tile')).toHaveCount(1);
+  await expect.poll(thumbnails).toBe(1);
+  await expect
+    .poll(async () => (await callApi<{ photos: { hasThumbnail: boolean }[] }>(page, 'entries', 'getDay', localDateKey())).photos[0].hasThumbnail)
+    .toBe(true);
 });
 
 test('refuses a corrupted backup and keeps the journal unchanged', async () => {
@@ -280,6 +343,341 @@ test('refuses a corrupted backup and keeps the journal unchanged', async () => {
   await expect(page.getByRole('dialog', { name: 'Restore this backup?' })).toBeHidden();
   const day = await callApi<{ entry: { body: string } }>(page, 'entries', 'getDay', localDateKey());
   expect(day.entry.body).toBe('Still here');
+});
+
+test('makes automatic backups into a folder the person chose', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { app, page } = run;
+  const folder = makeDataDir();
+  dirs.push(folder);
+  await callApi(page, 'entries', 'update', localDateKey(), { body: 'Backed up by itself' });
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const section = page.locator('#settings-backup');
+  // The switch follows the saved setting, so it flips once the setting is back from the main process.
+  const autoBackup = section.getByRole('checkbox', { name: 'Automatic backups' });
+  await autoBackup.click();
+  await expect(autoBackup).toBeChecked();
+  await stubOpenDialog(app, [folder]);
+  await section.getByRole('button', { name: /Choose folder/ }).click();
+  await expect(section).toContainText(folder);
+  await section.getByRole('button', { name: /Back up now/ }).click();
+  await expect.poll(() => readdirSync(folder).filter((n) => /^mJournal-auto-backup-.+\.zip$/.test(n)).length).toBe(1);
+  await expect(section).toContainText('Last automatic backup');
+  expect((await callApi<{ autoBackup: boolean }>(page, 'settings', 'get')).autoBackup).toBe(true);
+});
+
+test('protects backups with a password and restores them with it', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { app, page, dataDir } = run;
+  const out = makeDataDir();
+  dirs.push(out);
+  const backup = join(out, 'mJournal-backup-test.mjbackup');
+  await callApi(page, 'entries', 'update', localDateKey(), { body: 'A private thought' });
+  await page.getByRole('link', { name: 'Settings' }).click();
+
+  await page.getByRole('button', { name: /Set a password/ }).click();
+  const setDialog = page.getByRole('dialog', { name: 'Protect backups with a password' });
+  await setDialog.getByLabel('Password', { exact: true }).fill('tea by the window');
+  await setDialog.getByLabel('The same password again').fill('tea by the window');
+  const protect = setDialog.getByRole('button', { name: 'Protect backups' });
+  await expect(protect).toBeDisabled();
+  await setDialog.getByRole('checkbox', { name: /saved this password/ }).check();
+  await protect.click();
+  await expect(page.locator('.toast')).toContainText('protected with your password');
+  expect(existsSync(join(dataDir, 'backup-key.json'))).toBe(true);
+
+  await stubSaveDialog(app, backup);
+  await page.getByRole('button', { name: /Create backup/ }).click();
+  await expect(page.locator('.toast').last()).toContainText('Backup saved');
+  expect(readFileSync(backup).subarray(0, 8).toString('ascii')).toBe('MJBKENC1');
+  expect(readFileSync(backup).includes(Buffer.from('A private thought'))).toBe(false);
+
+  // On this computer the remembered key opens it without asking.
+  await callApi(page, 'entries', 'update', localDateKey(), { body: 'Changed afterwards' });
+  await stubOpenDialog(app, [backup]);
+  await page.getByRole('button', { name: /Restore…/ }).click();
+  const restoreDialog = page.getByRole('dialog', { name: 'Restore this backup?' });
+  await expect(restoreDialog).toContainText('protected with a password');
+  await restoreDialog.getByRole('checkbox').check();
+  await restoreDialog.getByRole('button', { name: 'Replace my journal' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.waitForSelector('.app');
+  expect((await callApi<{ entry: { body: string } }>(page, 'entries', 'getDay', localDateKey())).entry.body).toBe('A private thought');
+
+  // Without the remembered key (another computer), it asks for the password.
+  const { rmSync } = await import('node:fs');
+  rmSync(join(dataDir, 'backup-key.json'));
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await stubOpenDialog(app, [backup]);
+  await page.getByRole('button', { name: /Restore…/ }).click();
+  const unlock = page.getByRole('dialog', { name: 'This backup has a password' });
+  await unlock.getByLabel('Backup password').fill('coffee by the door');
+  await unlock.getByRole('button', { name: 'Open backup' }).click();
+  await expect(unlock).toContainText('doesn’t open this backup');
+  await unlock.getByLabel('Backup password').fill('tea by the window');
+  await unlock.getByRole('button', { name: 'Open backup' }).click();
+  await expect(page.getByRole('dialog', { name: 'Restore this backup?' })).toContainText('passed its checks');
+  await page.getByRole('dialog', { name: 'Restore this backup?' }).getByRole('button', { name: 'Cancel' }).click();
+});
+
+test('restores a daily safety snapshot from Settings', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page, dataDir } = run;
+  await callApi(page, 'entries', 'update', localDateKey(), { body: 'Before the mistake' });
+  const snapshots = join(dataDir, 'backups', 'automatic');
+  // The first snapshot is taken a few seconds after mJournal starts.
+  await expect
+    .poll(() => existsSync(snapshots) && readdirSync(snapshots).some((n) => n.startsWith('mJournal-snapshot-')), { timeout: 20_000 })
+    .toBe(true);
+  await callApi(page, 'entries', 'update', localDateKey(), { body: 'After the mistake' });
+
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Restore a snapshot/ }).click();
+  await page.getByRole('dialog', { name: 'Restore a snapshot' }).getByRole('button', { name: 'Choose' }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Restore this snapshot?' });
+  await expect(dialog).toContainText('photos stay as they are');
+  await dialog.getByRole('checkbox').check();
+  await dialog.getByRole('button', { name: 'Replace my journal' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.waitForSelector('.app');
+  await page.getByRole('link', { name: 'Today' }).click();
+  await expect(page.getByRole('textbox', { name: 'Free writing' })).toHaveValue('Before the mistake');
+});
+
+test('tags a day with a chip or a #word, and finds it by tag', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page } = run;
+  const picker = page.locator('.tag-picker');
+  const walk = picker.getByRole('button', { name: 'Walk', exact: true });
+  await walk.click();
+  await expect(walk).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('textbox', { name: 'Free writing' }).fill('Picked strawberries with #Grandma');
+  await saved(page);
+  await expect(picker).toContainText('#Grandma');
+
+  await page.getByRole('link', { name: 'Journal' }).click();
+  await page.getByRole('button', { name: /^Tags/ }).click();
+  await page.getByRole('checkbox', { name: /Grandma/ }).check();
+  await expect(page.locator('.result')).toHaveCount(1);
+  await expect(page.locator('.result')).toContainText('Walk');
+});
+
+test('deletes a day and brings it back with Undo or from Recently removed', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page } = run;
+  const writing = page.getByRole('textbox', { name: 'Free writing' });
+  const deleteDay = async () => {
+    await page.locator('.day-footer').getByRole('button', { name: /Delete entry/ }).click();
+    await page.getByRole('dialog', { name: /Delete this day/ }).getByRole('button', { name: 'Delete entry' }).click();
+    await expect(writing).toHaveValue('');
+  };
+  await writing.fill('A day worth keeping');
+  await saved(page);
+
+  await deleteDay();
+  await page.locator('.toast').getByRole('button', { name: 'Undo' }).click();
+  await expect(writing).toHaveValue('A day worth keeping');
+
+  await deleteDay();
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const removed = page.locator('#settings-removed');
+  await expect(removed).toContainText('A day worth keeping');
+  await removed.getByRole('button', { name: /Restore/ }).first().click();
+  await expect(page.locator('.toast').last()).toContainText('is back');
+  await page.getByRole('link', { name: 'Today' }).click();
+  await expect(writing).toHaveValue('A day worth keeping');
+});
+
+test('asks a pinned question every day and shows the month’s intention on Today', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page } = run;
+  const pinned = await callApi<{ text: string }[]>(page, 'prompts', 'setPinned', 'joy-01', 127);
+  await page.reload();
+  await page.waitForSelector('.app');
+  const card = page.locator('.answer-card.pinned');
+  await expect(card).toHaveCount(1);
+  await expect(card).toContainText(pinned[0].text);
+  await expect(card.getByRole('button', { name: 'Stop asking this every day' })).toHaveAttribute('aria-pressed', 'true');
+
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const prompts = page.locator('#settings-prompts');
+  await expect(prompts).toContainText(pinned[0].text);
+  await prompts.getByRole('button', { name: 'Stop asking' }).click();
+  await expect(prompts).toContainText('None yet');
+
+  await page.getByRole('link', { name: 'Monthly' }).click();
+  await page.getByRole('textbox', { name: /My intention for/ }).fill('Slow mornings');
+  await saved(page);
+  await page.getByRole('link', { name: 'Today' }).click();
+  await expect(page.locator('.answer-card.pinned')).toHaveCount(0);
+  await expect(page.locator('.intention-line')).toContainText('Slow mornings');
+});
+
+test('writes a letter to a future day and keeps it sealed', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page } = run;
+  await page.getByRole('button', { name: /Write to a future day/ }).click();
+  const dialog = page.getByRole('dialog', { name: 'A letter to a future day' });
+  await dialog.getByLabel('The day it opens').fill(localDateKey(30));
+  await dialog.getByRole('button', { name: 'Write the letter' }).click();
+  await page.getByRole('button', { name: /Write a letter to this day/ }).click();
+  await page.getByRole('textbox', { name: /Letter to/ }).fill('Dear future me, I hope the garden grew.');
+  await saved(page);
+  const letters = await callApi<{ openOn: string; editable: boolean; body: string | null }[]>(page, 'capsules', 'list');
+  expect(letters).toMatchObject([{ openOn: localDateKey(30), editable: true, body: 'Dear future me, I hope the garden grew.' }]);
+
+  // Settings lists it by its dates only.
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const section = page.locator('#settings-letters');
+  await expect(section).toContainText('Opens');
+  await expect(section).not.toContainText('garden');
+});
+
+test('opens a search result with its matches marked, and searches reflections too', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page } = run;
+  await callApi(page, 'entries', 'update', localDateKey(-2), { body: 'A long walk by the sea, then tea.' });
+  await callApi(page, 'entries', 'update', localDateKey(-1), { body: 'Walk to the shop in the rain.' });
+  const month = localDateKey().slice(0, 7);
+  await callApi(page, 'months', 'saveReflection', month, 'learned', 'The sea always calms me.');
+
+  await page.getByRole('link', { name: 'Journal' }).click();
+  const search = page.getByRole('searchbox', { name: 'Search your journal' });
+  // The search follows the typing after a short pause; wait until the address has the new words.
+  const searched = (text: string) =>
+    expect.poll(() => page.evaluate(() => new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('q'))).toBe(text);
+  await search.fill('walk -rain');
+  await searched('walk -rain');
+  await expect(page.locator('.result-group:not(.writing-results) .result')).toHaveCount(1);
+  await search.fill('"long walk"');
+  await searched('"long walk"');
+  await expect(page.locator('.result-group:not(.writing-results) .result')).toHaveCount(1);
+  await page.locator('.result-group:not(.writing-results) .result').first().click();
+  const banner = page.getByRole('region', { name: 'Search matches' });
+  await expect(banner).toContainText('Matches for “"long walk"”');
+  await expect(page.locator('.writing-card .writing-highlights mark')).toHaveText(['long walk']);
+  await banner.getByRole('button', { name: 'Done' }).click();
+  await expect(banner).toBeHidden();
+  await expect(page.locator('.writing-highlights')).toHaveCount(0);
+
+  await page.getByRole('link', { name: 'Journal' }).click();
+  await search.fill('sea');
+  await searched('sea');
+  const writing = page.locator('.writing-results');
+  await expect(writing).toContainText('Monthly reflection');
+  await writing.locator('.result').click();
+  await expect(page.getByRole('region', { name: 'Search matches' })).toContainText('Matches for');
+  await expect(page.locator('.reflection .writing-highlights mark').first()).toHaveText('sea');
+});
+
+test('keeps a letter to the year in its year in review', async () => {
+  const dataDir = makeDataDir();
+  dirs.push(dataDir);
+  run = await launch(dataDir);
+  let { page } = run;
+  await callApi(page, 'entries', 'update', localDateKey(), { body: 'Something to look back on', mood: 'happy' });
+  await page.getByRole('link', { name: 'Monthly' }).click();
+  await page.getByRole('link', { name: /Year in review/ }).click();
+  const year = localDateKey().slice(0, 4);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(year);
+  await expect(page.getByRole('heading', { name: 'What I recorded' })).toBeVisible();
+  await expect(page.locator('.year-month')).toHaveCount(12);
+  await page.getByRole('textbox', { name: `Letter to myself for ${year}` }).fill('Dear me, what a year.');
+  await saved(page);
+  await closeLikeUser(run.app);
+
+  run = await launch(dataDir);
+  page = run.page;
+  await page.evaluate((hash) => (window.location.hash = hash), `#/year/${year}`);
+  await expect(page.getByRole('textbox', { name: `Letter to myself for ${year}` })).toHaveValue('Dear me, what a year.');
+});
+
+test('shows gentle insights by weekday, energy, tags and month', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page } = run;
+  await callApi(page, 'entries', 'update', localDateKey(-1), { mood: 'happy', energy: 4, body: 'A good day' });
+  await callApi(page, 'entries', 'setTag', localDateKey(-1), 'Walk', true);
+  await page.getByRole('link', { name: 'Insights' }).click();
+  for (const name of ['Moods by weekday', 'Energy by mood', 'Tags', 'Words per month']) {
+    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+  }
+  await expect(page.locator('section[aria-labelledby="energy-mood"]')).toContainText('Happy');
+  await expect(page.locator('section[aria-labelledby="tag-counts"]')).toContainText('Walk');
+  await page.getByRole('radio', { name: 'Photos' }).click();
+  await expect(page.getByRole('heading', { name: 'Photos per month' })).toBeVisible();
+});
+
+test('adds a quick note to the end of today’s writing', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { app, page } = run;
+  await page.getByRole('textbox', { name: 'Free writing' }).fill('Morning pages.');
+  // What the global shortcut and the tray's "Quick note…" do.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('mj-event:quick-note'));
+  const dialog = page.getByRole('dialog', { name: /Quick note/ });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('textbox', { name: 'Quick note' }).fill('coffee with Ana');
+  await dialog.getByRole('textbox', { name: 'Quick note' }).press('Control+Enter');
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('.toast')).toContainText('Added to today');
+  // The open page shows it right away, after what was being typed.
+  await expect(page.getByRole('textbox', { name: 'Free writing' })).toHaveValue(/^Morning pages\.\n\n.+ — coffee with Ana$/);
+});
+
+test('keeps running in the tray when the window is closed, until it is quit', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { app, page } = run;
+  await callApi(page, 'settings', 'update', { keepInTray: true });
+  await expect.poll(() => callApi<{ trayShown: boolean }>(page, 'app', 'desktopStatus').then((s) => s.trayShown)).toBe(true);
+  await page.getByRole('textbox', { name: 'Free writing' }).fill('Still here after closing');
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible())).toBe(false);
+  // Hidden, not closed: everything typed was saved, and mJournal answers as before.
+  expect((await callApi<{ entry: { body: string } }>(page, 'entries', 'getDay', localDateKey())).entry.body).toBe('Still here after closing');
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
+  await expect(page.getByRole('textbox', { name: 'Free writing' })).toHaveValue('Still here after closing');
+  // Quitting really ends it.
+  const exited = new Promise<void>((done) => app.process().once('exit', () => done()));
+  await app.evaluate(({ app: electronApp }) => electronApp.quit());
+  await exited;
+  run = null;
+});
+
+test('keeps a drawing as a photo of the day', async () => {
+  run = await launch();
+  dirs.push(run.dataDir);
+  const { page } = run;
+  await page.getByRole('button', { name: /draw something/i }).click();
+  const dialog = page.getByRole('dialog', { name: 'Draw something' });
+  const keep = dialog.getByRole('button', { name: 'Keep it with this day' });
+  await expect(keep).toBeDisabled();
+  const canvas = dialog.getByRole('img', { name: /Drawing area/ });
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.3);
+  await page.mouse.down();
+  for (let i = 1; i <= 10; i++) await page.mouse.move(box.x + box.width * (0.2 + i * 0.05), box.y + box.height * (0.3 + i * 0.03));
+  await page.mouse.up();
+  await dialog.getByRole('radio', { name: 'Rose' }).click();
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.7);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.6);
+  await page.mouse.up();
+  await keep.click();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator('.day-photos .photo-tile')).toHaveCount(1);
+  const day = await callApi<{ photos: { originalName: string; mime: string }[] }>(page, 'entries', 'getDay', localDateKey());
+  expect(day.photos[0].originalName).toMatch(/^doodle-\d{4}-\d{2}-\d{2}-\d{4}\.png$/);
+  expect(day.photos[0].mime).toBe('image/png');
 });
 
 test('switches to the dark evening theme', async () => {

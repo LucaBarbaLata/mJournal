@@ -295,3 +295,26 @@
   align-items: center;
   gap: 4px;
 }
+
+/* ---------- The period for the cards below ---------- */
+.insights-period {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+.insights-period .range-switch {
+  margin-bottom: 0;
+}
+.labeled-bars .mood-bars-label {
+  min-width: 0;
+}
+.tag-bar-label {
+  color: inherit;
+  font-weight: 700;
+}
+.year-review-link {
+  justify-self: start;
+  margin-top: 8px;
+}

@@ -4,11 +4,13 @@
  * Electron-specific actions (dialogs, folders) come in through `Platform`.
  */
 import { basename } from 'node:path';
-import type { MJournalApi, SearchQuery, Settings } from '@core/api';
+import type { DesktopStatus, ImportResult, MJournalApi, SearchQuery, Settings } from '@core/api';
 import type { UpdateStatus } from '@core/updates';
 import { addDays, todayKey, type DateKey } from '@core/dates';
 import { isMoodColor, isMoodIcon, MAX_MOOD_LABEL_LENGTH, type MoodColor, type MoodIcon } from '@core/moods';
-import { MAX_PROMPT_LENGTH, MONTHLY_KEYS } from '@core/prompts';
+import { MAX_GALLERY_LIMIT } from '@core/photos';
+import { MAX_INTENTION_LENGTH, MAX_PROMPT_LENGTH, MONTHLY_INTENTION_KEY, MONTHLY_KEYS, YEARLY_KEYS } from '@core/prompts';
+import { MAX_TAG_LENGTH } from '@core/tags';
 import { MAX_TEXT_LENGTH } from '@core/text';
 import {
   expectArray,
@@ -27,6 +29,8 @@ import {
 import type { JournalHost } from './host';
 import type { AppLock } from './lock';
 import { writeBackup } from './services/backup';
+import { ENCRYPTED_BACKUP_EXTENSION, MAX_BACKUP_PASSWORD_LENGTH } from './services/backupCrypto';
+import { Backups } from './services/backups';
 import { buildCsv, buildJsonExport } from './services/exporter';
 import { fileStamp, writeFileAtomic } from './services/fsutil';
 import { MAX_PHOTO_BYTES, MAX_THUMBNAIL_BYTES } from './services/photoFiles';
@@ -41,10 +45,14 @@ export interface Platform {
   notificationsSupported: boolean;
   chooseImages(): Promise<string[]>;
   chooseBackupFile(): Promise<string | null>;
+  /** A folder picker (for automatic backups). */
+  chooseFolder(title: string): Promise<string | null>;
   chooseSaveLocation(defaultName: string, filter: { name: string; extensions: string[] }): Promise<string | null>;
   showItemInFolder(path: string): void;
   openFolder(path: string): Promise<void>;
   settingsChanged(settings: Settings): void;
+  /** The tray, opening at sign-in and the quick-note shortcut. */
+  desktopStatus(): DesktopStatus;
   /** The update check (services/updates.ts). */
   updates: { status(): UpdateStatus; check(): Promise<UpdateStatus>; install(): Promise<UpdateStatus>; dismissResult(): UpdateStatus };
   openReleasePage(): Promise<void>;
@@ -70,6 +78,28 @@ function expectToken(value: unknown): string {
   return value;
 }
 
+/** Passwords are passed on exactly as typed (no clean-up), so the key never depends on how text was tidied. */
+function expectPassword(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_BACKUP_PASSWORD_LENGTH) {
+    throw new ValidationError('Invalid password.');
+  }
+  return value;
+}
+
+const SNAPSHOT_NAME_RE = /^mJournal-[A-Za-z0-9._-]{1,160}\.db$/;
+
+function expectSnapshotName(value: unknown): string {
+  if (typeof value !== 'string' || !SNAPSHOT_NAME_RE.test(value)) throw new ValidationError('Invalid snapshot.');
+  return value;
+}
+
+/** A tag's key or label as typed (the store checks the characters). */
+function expectTagText(value: unknown): string {
+  return expectNonEmptyText(value, 'a tag', MAX_TAG_LENGTH * 2);
+}
+
+const recordId = (value: unknown, what: string) => expectInteger(value, 1, Number.MAX_SAFE_INTEGER, what);
+
 function expectBytes(value: unknown, max: number, what: string): Uint8Array {
   if (!(value instanceof Uint8Array)) throw new ValidationError(`Invalid ${what}.`);
   if (value.byteLength > max) throw new ValidationError(`The ${what} is too large.`);
@@ -89,6 +119,7 @@ export function parseSearchQuery(input: unknown): SearchQuery {
     moods: o.moods === undefined ? undefined : expectArray(o.moods, 50, 'moods').map((m) => expectId(m, 'mood')),
     withPhotos: o.withPhotos === undefined ? undefined : expectBoolean(o.withPhotos),
     favoritesOnly: o.favoritesOnly === undefined ? undefined : expectBoolean(o.favoritesOnly),
+    tags: o.tags === undefined ? undefined : expectArray(o.tags, 50, 'tags').map((t) => expectTagText(t)),
     order: o.order === undefined ? undefined : expectOneOf(o.order, ['newest', 'oldest'] as const, 'order'),
     cursor: o.cursor === undefined || o.cursor === null ? null : expectDateKey(o.cursor, 'cursor'),
     limit: o.limit === undefined ? undefined : expectInteger(o.limit, 1, 100, 'limit'),
@@ -119,7 +150,12 @@ function guardWhileLocked(handlers: ApiHandlers, appLock: AppLock): ApiHandlers 
 
 const MAX_PIN_INPUT = 64;
 
-export function createApi(host: JournalHost, platform: Platform, appLock: AppLock): ApiHandlers {
+export function createApi(
+  host: JournalHost,
+  platform: Platform,
+  appLock: AppLock,
+  backups: Backups = new Backups(() => host.journal, platform.appVersion),
+): ApiHandlers {
   const j = () => host.journal;
 
   /** Days up to tomorrow can be written (a little slack for clock and time-zone changes). */
@@ -150,12 +186,19 @@ export function createApi(host: JournalHost, platform: Platform, appLock: AppLoc
         dataDir: host.root,
         notificationsSupported: platform.notificationsSupported,
       }),
+      desktopStatus: async () => platform.desktopStatus(),
     },
 
     entries: {
       getDay: async (date) => {
         const d = expectDateKey(date);
-        return { date: d, entry: j().entries.get(d), answers: j().entries.answers(d), photos: j().photos.forDay(d) };
+        return {
+          date: d,
+          entry: j().entries.get(d),
+          answers: j().entries.answers(d),
+          photos: j().photos.forDay(d),
+          tags: j().entries.tags(d),
+        };
       },
       update: async (date, patch) => {
         const d = writableDate(date);
@@ -168,7 +211,16 @@ export function createApi(host: JournalHost, platform: Platform, appLock: AppLoc
           favorite: o.favorite === undefined ? undefined : expectBoolean(o.favorite),
         });
       },
-      remove: async (date) => j().entries.remove(expectDateKey(date)),
+      remove: async (date) => ({ removedId: j().removedDays.remove(expectDateKey(date)) }),
+      listRemoved: async () => j().removedDays.list(),
+      restoreRemoved: async (id) => j().removedDays.restore(recordId(id, 'removed day')),
+      deleteRemoved: async (id) => j().removedDays.deleteForever(recordId(id, 'removed day')),
+      appendToBody: async (date, text) => j().entries.appendToBody(writableDate(date), expectNonEmptyText(text, 'a note', 20_000)),
+      setTag: async (date, label, picked) => {
+        const d = writableDate(date);
+        j().tags.setForDay(d, expectTagText(label), expectBoolean(picked));
+        return j().entries.tags(d);
+      },
       saveAnswer: async (date, input) => {
         const o = expectObject(input, 'answer');
         return j().entries.saveAnswer(writableDate(date), {
@@ -200,6 +252,24 @@ export function createApi(host: JournalHost, platform: Platform, appLock: AppLoc
         });
       },
       archiveCustom: async (id) => j().prompts.archiveCustom(expectPromptId(id)),
+      pinned: async () => j().prompts.pinned(),
+      setPinned: async (id, weekdays) =>
+        j().prompts.setPinned(expectPromptId(id), weekdays === null ? null : expectInteger(weekdays, 1, 127, 'weekdays')),
+    },
+
+    tags: {
+      list: async () => j().tags.list(),
+      forDay: async (date) => j().entries.tags(expectDateKey(date)),
+      create: async (label) => j().tags.create(expectTagText(label)),
+      update: async (name, patch) => {
+        const o = expectObject(patch, 'changes');
+        return j().tags.update(expectTagText(name), {
+          label: o.label === undefined ? undefined : expectTagText(o.label),
+          quick: o.quick === undefined ? undefined : expectBoolean(o.quick),
+        });
+      },
+      reorder: async (names) => j().tags.reorder(expectArray(names, 1000, 'tags').map((n) => expectTagText(n))),
+      remove: async (name) => j().tags.remove(expectTagText(name)),
     },
 
     moods: {
@@ -232,11 +302,17 @@ export function createApi(host: JournalHost, platform: Platform, appLock: AppLoc
       pickAndImport: async (date) => {
         const d = writableDate(date);
         const paths = await platform.chooseImages();
-        if (paths.length === 0) return { imported: [], rejected: [] };
-        return j().photos.importSources(
-          d,
-          paths.map((path) => ({ name: basename(path), path })),
-        );
+        // A large selection is added in batches; the per-day limit still reports file by file.
+        const result: ImportResult = { imported: [], rejected: [] };
+        for (let i = 0; i < paths.length; i += MAX_IMPORT_BATCH) {
+          const batch = await j().photos.importSources(
+            d,
+            paths.slice(i, i + MAX_IMPORT_BATCH).map((path) => ({ name: basename(path), path })),
+          );
+          result.imported.push(...batch.imported);
+          result.rejected.push(...batch.rejected);
+        }
+        return result;
       },
       importFiles: async (date, paths) => {
         const d = writableDate(date);
@@ -263,13 +339,18 @@ export function createApi(host: JournalHost, platform: Platform, appLock: AppLoc
       },
       reorder: async (date, ids) =>
         j().photos.reorder(expectDateKey(date), expectArray(ids, 200, 'photos').map((id) => expectId(id, 'photo'))),
+      moveToDay: async (id, date) => j().photos.moveToDay(expectId(id, 'photo'), writableDate(date)),
       remove: async (id) => j().photos.remove(expectId(id, 'photo')),
       restore: async (id) => j().photos.restore(expectId(id, 'photo')),
       deleteForever: async (id) => j().photos.deleteForever(expectId(id, 'photo')),
       listRemoved: async () => j().photos.listRemoved(),
       gallery: async (filter) => {
         const o = expectObject(filter, 'filter');
-        return j().photos.gallery({ from: optionalDate(o.from, 'start date'), to: optionalDate(o.to, 'end date') });
+        return j().photos.gallery({
+          from: optionalDate(o.from, 'start date'),
+          to: optionalDate(o.to, 'end date'),
+          limit: o.limit === undefined ? undefined : expectInteger(o.limit, 1, MAX_GALLERY_LIMIT, 'limit'),
+        });
       },
       galleryMonths: async () => j().photos.galleryMonths(),
       saveThumbnail: async (id, data, width, height) =>
@@ -288,18 +369,46 @@ export function createApi(host: JournalHost, platform: Platform, appLock: AppLoc
 
     journal: {
       search: async (query) => j().search.search(parseSearchQuery(query)),
+      searchWriting: async (query) => {
+        const o = expectObject(query, 'search');
+        return j().writing.search(expectText(o.text, 'search text', 500), {
+          from: optionalDate(o.from, 'start date'),
+          to: optionalDate(o.to, 'end date'),
+        });
+      },
       months: async () => j().search.months(),
     },
 
     months: {
       recap: async (month) => j().reflections.recap(expectMonthKey(month)),
-      saveReflection: async (month, key, answer) =>
-        j().reflections.save(expectMonthKey(month), expectOneOf(key, MONTHLY_KEYS, 'question'), expectText(answer, 'reflection')),
+      saveReflection: async (month, key, answer) => {
+        const question = expectOneOf(key, MONTHLY_KEYS, 'question');
+        const max = question === MONTHLY_INTENTION_KEY ? MAX_INTENTION_LENGTH : undefined;
+        return j().reflections.save(expectMonthKey(month), question, expectText(answer, 'reflection', max));
+      },
+      intention: async (month) => j().reflections.intention(expectMonthKey(month)),
+    },
+
+    years: {
+      recap: async (year) => j().years.recap(expectInteger(year, 1900, 2999, 'year')),
+      saveReflection: async (year, key, answer) =>
+        j().years.save(expectInteger(year, 1900, 2999, 'year'), expectOneOf(key, YEARLY_KEYS, 'question'), expectText(answer, 'reflection')),
+    },
+
+    capsules: {
+      list: async () => j().capsules.list(),
+      forDay: async (date) => j().capsules.forDay(expectDateKey(date)),
+      create: async (openOn) => j().capsules.create(expectDateKey(openOn, 'day')),
+      save: async (id, body) => j().capsules.save(recordId(id, 'letter'), expectText(body, 'letter')),
+      remove: async (id) => j().capsules.remove(recordId(id, 'letter')),
+      markOpened: async (id) => j().capsules.markOpened(recordId(id, 'letter')),
+      datesInMonth: async (month) => j().capsules.datesInMonth(expectMonthKey(month)),
     },
 
     stats: {
       overview: async (today, range) =>
         j().stats.overview(expectDateKey(today), expectOneOf(range, ['month', 'quarter', 'year', 'all'] as const, 'range')),
+      streak: async (today) => j().stats.streak(expectDateKey(today)),
       yearInMoods: async (year) => j().stats.yearInMoods(expectInteger(year, 1900, 2999, 'year')),
     },
 
@@ -352,22 +461,55 @@ export function createApi(host: JournalHost, platform: Platform, appLock: AppLoc
           buildCsv(j()),
         ),
       createBackup: async () => {
-        const target = await platform.chooseSaveLocation(`mJournal-backup-${fileStamp(j().clock())}.zip`, {
-          name: 'mJournal backup',
-          extensions: ['zip'],
-        });
+        // With a backup password, the backup is protected (a .mjbackup file) as it is written.
+        const key = backups.key();
+        const target = await platform.chooseSaveLocation(
+          `mJournal-backup-${fileStamp(j().clock())}.${key ? ENCRYPTED_BACKUP_EXTENSION : 'zip'}`,
+          key
+            ? { name: 'mJournal backup (password-protected)', extensions: [ENCRYPTED_BACKUP_EXTENSION] }
+            : { name: 'mJournal backup', extensions: ['zip'] },
+        );
         if (!target) return { canceled: true };
-        const { bytes } = await writeBackup(j(), target, platform.appVersion);
-        j().settings.setInternal('lastBackupAt', j().clock().toISOString());
+        const { bytes } = await writeBackup(j(), target, platform.appVersion, { key });
+        backups.noteManualBackup();
         savedFiles.add(target);
         return { canceled: false, path: target, bytes };
       },
       inspectBackup: async () => {
         const file = await platform.chooseBackupFile();
-        return file ? host.inspectBackup(file) : null;
+        return file ? host.inspectBackup(file, backups.key()) : null;
       },
-      restoreBackup: async (token) => host.restore(expectToken(token)),
+      unlockBackup: async (token, password) => host.unlockBackup(expectToken(token), expectPassword(password)),
+      inspectSnapshot: async (name) => host.inspectSnapshot(expectSnapshotName(name)),
+      restoreBackup: async (token) => {
+        const result = await host.restore(expectToken(token));
+        // The restored journal brings its own settings (theme, text size, tray, shortcut…): apply them now.
+        platform.settingsChanged(j().settings.get());
+        return result;
+      },
       cancelRestore: async (token) => host.cancelRestore(expectToken(token)),
+      backupStatus: async () => backups.status(),
+      chooseBackupFolder: async () => {
+        const folder = await platform.chooseFolder('Choose a folder for automatic backups');
+        if (folder) backups.setFolder(folder);
+        return backups.status();
+      },
+      clearBackupFolder: async () => {
+        backups.clearFolder();
+        return backups.status();
+      },
+      backUpNow: async () => {
+        await backups.run();
+        return backups.status();
+      },
+      snoozeBackupReminder: async () => {
+        backups.snoozeReminder();
+        return backups.status();
+      },
+      setBackupPassword: async (password) => {
+        await backups.setPassword(password === null ? null : expectPassword(password));
+        return backups.status();
+      },
       showSavedFile: async (path) => {
         const target = expectText(path, 'file path', 4096);
         if (savedFiles.has(target) && existsSync(target)) platform.showItemInFolder(target);

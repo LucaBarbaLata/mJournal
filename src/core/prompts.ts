@@ -279,4 +279,31 @@ export const MONTHLY_QUESTIONS = [
 /** The free-form "Dear me…" letter stored alongside the monthly answers. */
 export const MONTHLY_LETTER_KEY = 'letter';
 
-export const MONTHLY_KEYS: readonly string[] = [...MONTHLY_QUESTIONS.map((q) => q.key), MONTHLY_LETTER_KEY];
+/** Asked on every day of the week (bit 0 = Sunday … bit 6 = Saturday). */
+export const EVERY_WEEKDAY = 127;
+
+/** One intention for the month, set at its start and shown on Today (not one of the questions above). */
+export const MONTHLY_INTENTION_KEY = 'intention';
+export const MAX_INTENTION_LENGTH = 300;
+
+/** Questions for the year in review, in display order. */
+export const YEARLY_QUESTIONS = [
+  { key: 'meaningful', text: 'What made this year meaningful?' },
+  { key: 'proud', text: 'What am I proud of?' },
+  { key: 'learned', text: 'What did I learn about myself?' },
+  { key: 'people', text: 'Who made this year better?' },
+  { key: 'grateful', text: 'What am I most grateful for?' },
+  { key: 'leave-behind', text: 'What do I want to leave behind?' },
+  { key: 'carry-forward', text: 'What do I want to carry into next year?' },
+] as const;
+
+/** The "Dear me…" letter for the year. */
+export const YEARLY_LETTER_KEY = 'letter';
+
+export const YEARLY_KEYS: readonly string[] = [...YEARLY_QUESTIONS.map((q) => q.key), YEARLY_LETTER_KEY];
+
+export const MONTHLY_KEYS: readonly string[] = [
+  ...MONTHLY_QUESTIONS.map((q) => q.key),
+  MONTHLY_LETTER_KEY,
+  MONTHLY_INTENTION_KEY,
+];

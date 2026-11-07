@@ -1,7 +1,11 @@
-/** The memory gallery: every photo, by month, like a scrapbook. */
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+/**
+ * The memory gallery: every photo, by month, like a scrapbook. Photos load a
+ * page at a time (more come as you scroll), so large libraries stay quick.
+ */
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { GalleryPhoto } from '@core/api';
 import { formatMonthName, lastDayOfMonth, makeMonthKey, monthOf } from '@core/dates';
+import { GALLERY_PAGE_SIZE } from '@core/photos';
 import { hashString } from '@core/promptSelection';
 import { PhotosArt } from '../components/Decorations';
 import { Icon } from '../components/Icon';
@@ -23,19 +27,44 @@ export function MemoriesView({ params }: { params: URLSearchParams }) {
 
   const from = year ? `${year}-${month || '01'}-01` : undefined;
   const to = year ? (month ? lastDayOfMonth(`${year}-${month}`) : `${year}-12-31`) : undefined;
-  const photos = useQuery(`gallery:${from}:${to}`, () => api.photos.gallery({ from, to }), ['photos', 'entries']);
+  // How many pages are shown. Reloads ask for all of them again, so the list never jumps back to the top.
+  const [pages, setPages] = useState(1);
+  useEffect(() => setPages(1), [from, to]);
+  const limit = pages * GALLERY_PAGE_SIZE;
+  const photos = useQuery(`gallery:${from}:${to}:${limit}`, () => api.photos.gallery({ from, to, limit }), [
+    'photos',
+    'entries',
+  ]);
   const [open, setOpen] = useState<number | null>(null);
+  const hasMore = photos.data?.hasMore ?? false;
+  const showMore = () => {
+    if (hasMore && !photos.loading) setPages((n) => n + 1);
+  };
 
   useEffect(() => {
-    if (photos.data) ensureThumbnails(photos.data);
+    if (photos.data) ensureThumbnails(photos.data.photos);
   }, [photos.data]);
+
+  // Load the next page when the end of the list scrolls into view.
+  const sentinel = useRef<HTMLDivElement>(null);
+  const showMoreRef = useRef(showMore);
+  showMoreRef.current = showMore;
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !hasMore) return;
+    const observer = new IntersectionObserver((items) => {
+      if (items.some((item) => item.isIntersecting)) showMoreRef.current();
+    }, { rootMargin: '600px 0px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasMore, limit]);
 
   const years = useMemo(() => [...new Set((months.data ?? []).map((m) => m.month.slice(0, 4)))], [months.data]);
   const monthsInYear = useMemo(
     () => (months.data ?? []).filter((m) => m.month.startsWith(`${year}-`)).map((m) => m.month.slice(5)),
     [months.data, year],
   );
-  const list = photos.data ?? [];
+  const list = photos.data?.photos ?? [];
   const groups = useMemo(() => {
     const map = new Map<string, { photo: GalleryPhoto; index: number }[]>();
     list.forEach((photo, index) => {
@@ -153,11 +182,23 @@ export function MemoriesView({ params }: { params: URLSearchParams }) {
         ))
       )}
 
+      {hasMore && (
+        <div className="load-more" ref={sentinel}>
+          <button type="button" className="btn" onClick={showMore} disabled={photos.loading}>
+            {photos.loading ? <span className="spinner" aria-hidden="true" /> : null} Show more photos
+          </button>
+        </div>
+      )}
+
       {open !== null && list[open] && (
         <Lightbox
           photos={list}
           index={open}
-          onIndexChange={setOpen}
+          onIndexChange={(index) => {
+            setOpen(index);
+            // Near the end of what's loaded, fetch the next page so the arrows keep going.
+            if (index >= list.length - 3) showMore();
+          }}
           onClose={() => setOpen(null)}
           onChanged={() => {
             photos.reload();

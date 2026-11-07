@@ -38,6 +38,8 @@ export function CalendarView({ month: routeMonth, selected: routeSelected }: { m
   const month = routeMonth ?? monthOf(routeSelected ?? today);
   const selected = routeSelected ?? (monthOf(today) === month ? today : null);
   const summaries = useQuery(`month:${month}`, () => api.entries.month(month), ['entries']);
+  const letterDays = useQuery(`letter-days:${month}`, () => api.capsules.datesInMonth(month), ['capsules']);
+  const letters = useMemo(() => new Set(letterDays.data ?? []), [letterDays.data]);
   const byDate = useMemo(
     () => new Map((summaries.dataKey === `month:${month}` ? summaries.data ?? [] : []).map((d) => [d.date, d])),
     [summaries.data, summaries.dataKey, month],
@@ -124,6 +126,7 @@ export function CalendarView({ month: routeMonth, selected: routeSelected }: { m
             selected={selected}
             weekStartsOn={settings.weekStartsOn}
             byDate={byDate}
+            letters={letters}
             onSelect={select}
             onOpen={(date) => navigate(href.day(date))}
           />
@@ -143,6 +146,9 @@ export function CalendarView({ month: routeMonth, selected: routeSelected }: { m
             <li>
               <Icon name="heart" size={14} filled /> Favorite
             </li>
+            <li>
+              <Icon name="envelope" size={14} /> Letter
+            </li>
           </ul>
         </div>
         {selected ? (
@@ -155,14 +161,16 @@ export function CalendarView({ month: routeMonth, selected: routeSelected }: { m
   );
 }
 
-function describe(summary: DaySummary | undefined, moodLabel: string | undefined): string {
-  if (!summary) return 'nothing saved';
+function describe(summary: DaySummary | undefined, moodLabel: string | undefined, letter: boolean): string {
+  if (!summary) return letter ? 'nothing saved, a letter to the future waits here' : 'nothing saved';
   const parts: string[] = [];
   if (moodLabel) parts.push(`mood: ${moodLabel}`);
   if (summary.energy) parts.push(`energy ${summary.energy} of 5`);
   if (summary.hasWriting) parts.push(`${summary.wordCount} words`);
   if (summary.photoCount) parts.push(`${summary.photoCount} ${summary.photoCount === 1 ? 'photo' : 'photos'}`);
   if (summary.favorite) parts.push('favorite');
+  if (summary.tags.length) parts.push(`tags: ${summary.tags.join(', ')}`);
+  if (letter) parts.push('a letter to the future');
   return parts.length ? parts.join(', ') : 'saved';
 }
 
@@ -173,6 +181,7 @@ interface MonthGridProps {
   selected: DateKey | null;
   weekStartsOn: 0 | 1 | 6;
   byDate: Map<DateKey, DaySummary>;
+  letters: ReadonlySet<DateKey>;
   onSelect: (date: DateKey) => void;
   onOpen: (date: DateKey) => void;
 }
@@ -183,7 +192,7 @@ interface MonthGridProps {
  */
 let focusAfterMove = false;
 
-function MonthGrid({ slide, month, today, selected, weekStartsOn, byDate, onSelect, onOpen }: MonthGridProps) {
+function MonthGrid({ slide, month, today, selected, weekStartsOn, byDate, letters, onSelect, onOpen }: MonthGridProps) {
   const { format, mood: moodFor } = useApp();
   const weeks = monthGrid(month, weekStartsOn);
   const names = weekdayNames(weekStartsOn, 'short');
@@ -257,7 +266,7 @@ function MonthGrid({ slide, month, today, selected, weekStartsOn, byDate, onSele
                     className={classes}
                     data-date={date}
                     tabIndex={date === focusDate ? 0 : -1}
-                    aria-label={`${format.long(date)}${isToday ? ', today' : ''}: ${describe(summary, mood?.label)}`}
+                    aria-label={`${format.long(date)}${isToday ? ', today' : ''}: ${describe(summary, mood?.label, letters.has(date))}`}
                     aria-current={isToday ? 'date' : undefined}
                     onClick={() => onSelect(date)}
                     onDoubleClick={() => onOpen(date)}
@@ -272,6 +281,7 @@ function MonthGrid({ slide, month, today, selected, weekStartsOn, byDate, onSele
                       {summary?.hasWriting && <Icon name="pen" size={12} />}
                       {summary && summary.photoCount > 0 && <Icon name="memories" size={12} />}
                       {summary?.favorite && <Icon name="heart" size={12} filled />}
+                      {letters.has(date) && <Icon name="envelope" size={12} />}
                     </span>
                   </button>
                 </td>
@@ -365,7 +375,14 @@ function DayPreview({ date, today }: { date: DateKey; today: DateKey }) {
   const answers = data?.answers.filter((a) => a.answer.trim()) ?? [];
   const photos = data?.photos ?? [];
   const hasContent =
-    !!entry && (entry.body.trim() || entry.mood || entry.energy || entry.moodNote.trim() || answers.length > 0 || photos.length > 0);
+    !!entry &&
+    (entry.body.trim() ||
+      entry.mood ||
+      entry.energy ||
+      entry.moodNote.trim() ||
+      answers.length > 0 ||
+      photos.length > 0 ||
+      (data?.tags.length ?? 0) > 0);
   const mood = moodFor(entry?.mood);
 
   return (
@@ -396,6 +413,11 @@ function DayPreview({ date, today }: { date: DateKey; today: DateKey }) {
                 <Icon name="heart" size={13} filled /> Favorite
               </span>
             )}
+            {data?.tags.map((tag) => (
+              <span key={tag.name} className="chip soft-sage">
+                <Icon name="tag" size={12} /> {tag.label}
+              </span>
+            ))}
           </div>
           {entry?.moodNote.trim() && <p className="preview-note">“{entry.moodNote.trim()}”</p>}
           {entry?.body.trim() && <p className="preview-body">{entry.body.trim().slice(0, 420)}{entry.body.trim().length > 420 ? '…' : ''}</p>}

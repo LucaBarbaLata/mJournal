@@ -360,3 +360,20 @@
 .letter-text {
   min-height: 160px;
 }
+
+/* ---------- The month's intention ---------- */
+.intention-card {
+  margin-bottom: 18px;
+  border-color: var(--sage-100);
+}
+.intention-card .card-title {
+  color: var(--sage-700);
+}
+.intention-hint {
+  margin: 0 0 8px;
+}
+.intention-input {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--text-lg);
+}

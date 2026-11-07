@@ -7,7 +7,8 @@ import { useEffect, useMemo, useState } from 'react';
 import type { MonthRecap } from '@core/api';
 import { addMonths, formatMonthName, monthOf, type MonthKey } from '@core/dates';
 import { energyLabel } from '@core/moods';
-import { MONTHLY_LETTER_KEY, MONTHLY_QUESTIONS } from '@core/prompts';
+import { MAX_INTENTION_LENGTH, MONTHLY_INTENTION_KEY, MONTHLY_LETTER_KEY, MONTHLY_QUESTIONS } from '@core/prompts';
+import { parseSearch, type ParsedSearch } from '@core/search';
 import { AutoTextarea } from '../components/AutoTextarea';
 import { MonthRibbon, MoodBars } from '../components/Charts';
 import { CountUp } from '../components/CountUp';
@@ -17,6 +18,7 @@ import { Lightbox } from '../components/Lightbox';
 import { MoodIcon } from '../components/MoodIcon';
 import { PhotoImage, photoAlt } from '../components/Photo';
 import { SaveIndicator } from '../components/SaveIndicator';
+import { SearchBanner } from '../components/SearchBanner';
 import { Tip } from '../components/Tip';
 import { api, errorMessage } from '../lib/api';
 import { useApp } from '../lib/app';
@@ -28,10 +30,11 @@ import { ensureThumbnails } from '../lib/thumbnails';
 import { useToday } from '../lib/time';
 import './month.css';
 
-export function MonthView({ month: routeMonth }: { month: MonthKey | null }) {
+export function MonthView({ month: routeMonth, query = null }: { month: MonthKey | null; query?: string | null }) {
   const today = useToday();
   const { format } = useApp();
   const month = routeMonth ?? monthOf(today);
+  const highlight = useMemo(() => (query ? parseSearch(query) : null), [query]);
   const currentMonth = monthOf(today);
   const recap = useQuery(`recap:${month}`, () => api.months.recap(month), ['entries', 'photos']);
   const data = recap.dataKey === `recap:${month}` ? recap.data : undefined;
@@ -72,8 +75,12 @@ export function MonthView({ month: routeMonth }: { month: MonthKey | null }) {
               This month
             </button>
           )}
+          <a className="btn btn-sm btn-ghost" href={href.year(Number(month.slice(0, 4)))}>
+            <Icon name="star" size={15} /> Year in review
+          </a>
         </div>
       </header>
+      {query && <SearchBanner key={query} query={query} scope=".month-page" onDone={() => navigate(href.month(month), { replace: true })} />}
 
       <Tip id="monthly" icon="letter">
         <strong>Tip:</strong> the top shows what you recorded this month; the bottom is just for your own words. Answer any
@@ -89,14 +96,14 @@ export function MonthView({ month: routeMonth }: { month: MonthKey | null }) {
         <div className="day-loading" aria-busy="true" />
       ) : (
         <div key={month} className={slideClass(slide)}>
-          <MonthContent recap={data} onChanged={recap.reload} />
+          <MonthContent recap={data} onChanged={recap.reload} highlight={highlight} />
         </div>
       )}
     </div>
   );
 }
 
-function MonthContent({ recap, onChanged }: { recap: MonthRecap; onChanged: () => void }) {
+function MonthContent({ recap, onChanged, highlight }: { recap: MonthRecap; onChanged: () => void; highlight: ParsedSearch | null }) {
   const { format, mood: moodFor } = useApp();
   const [lightbox, setLightbox] = useState<number | null>(null);
   const top = recap.moodCounts[0];
@@ -107,6 +114,7 @@ function MonthContent({ recap, onChanged }: { recap: MonthRecap; onChanged: () =
 
   return (
     <>
+      <Intention recap={recap} highlight={highlight} />
       <section className="card recorded" aria-labelledby="recorded-title">
         <div className="card-title">
           <h2 id="recorded-title">What I recorded</h2>
@@ -240,7 +248,7 @@ function MonthContent({ recap, onChanged }: { recap: MonthRecap; onChanged: () =
         </section>
       )}
 
-      <Reflection recap={recap} />
+      <Reflection recap={recap} highlight={highlight} />
 
       {lightbox !== null && recap.photos[lightbox] && (
         <Lightbox
@@ -256,7 +264,41 @@ function MonthContent({ recap, onChanged }: { recap: MonthRecap; onChanged: () =
   );
 }
 
-function Reflection({ recap }: { recap: MonthRecap }) {
+/** One intention for the month: set at its start, shown on Today, looked back on here. */
+function Intention({ recap, highlight }: { recap: MonthRecap; highlight: ParsedSearch | null }) {
+  const month = recap.month;
+  const [text, setText] = useState(recap.reflection[MONTHLY_INTENTION_KEY] ?? '');
+  const update = (value: string) => {
+    setText(value);
+    saveQueue.schedule(`reflection:${month}:${MONTHLY_INTENTION_KEY}`, async () => {
+      await api.months.saveReflection(month, MONTHLY_INTENTION_KEY, value);
+      invalidate('reflections');
+    });
+  };
+  return (
+    <section className="card intention-card" aria-labelledby="intention-title">
+      <div className="card-title">
+        <Icon name="leaf" size={18} />
+        <h2 id="intention-title">My intention for {formatMonthName(month)}</h2>
+      </div>
+      <p className="muted intention-hint">
+        One word or one line to carry through the month — it shows on Today as a gentle reminder.
+      </p>
+      <AutoTextarea
+        aria-labelledby="intention-title"
+        className="intention-input"
+        value={text}
+        highlight={highlight}
+        minRows={1}
+        maxLength={MAX_INTENTION_LENGTH}
+        placeholder="For example: slow mornings, more walks, kinder to myself…"
+        onChange={(event) => update(event.target.value)}
+      />
+    </section>
+  );
+}
+
+function Reflection({ recap, highlight }: { recap: MonthRecap; highlight: ParsedSearch | null }) {
   const { format } = useApp();
   const [answers, setAnswers] = useState<Record<string, string>>(recap.reflection);
   const month = recap.month;
@@ -292,6 +334,7 @@ function Reflection({ recap }: { recap: MonthRecap }) {
             <span className="reflection-question">{q.text}</span>
             <AutoTextarea
               value={answers[q.key] ?? ''}
+              highlight={highlight}
               minRows={2}
               placeholder="…"
               onChange={(event) => update(q.key, event.target.value)}
@@ -310,6 +353,7 @@ function Reflection({ recap }: { recap: MonthRecap }) {
           aria-label={`Letter to myself for ${format.monthYear(month)}`}
           className="lined letter-text"
           value={answers[MONTHLY_LETTER_KEY] ?? ''}
+          highlight={highlight}
           minRows={5}
           placeholder="Write a few lines to yourself about this month…"
           onChange={(event) => update(MONTHLY_LETTER_KEY, event.target.value)}

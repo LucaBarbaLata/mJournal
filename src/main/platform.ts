@@ -1,7 +1,7 @@
 /** Electron implementations of the dialogs and shell actions the API needs. */
 import { app, dialog, Notification, shell, type BrowserWindow } from 'electron';
 import { join } from 'node:path';
-import type { Settings } from '@core/api';
+import type { DesktopStatus, Settings } from '@core/api';
 import { RELEASES_PAGE } from '@core/updates';
 import { UserFacingError } from '@core/validation';
 import type { Platform } from './api';
@@ -10,6 +10,7 @@ export function electronPlatform(
   getWindow: () => BrowserWindow | null,
   settingsChanged: (settings: Settings) => void,
   updates: Platform['updates'],
+  desktopStatus: () => DesktopStatus,
 ): Platform {
   // Look dialog functions up at call time (not destructured) so tests can stub them.
   const parent = () => getWindow() ?? undefined;
@@ -35,7 +36,18 @@ export function electronPlatform(
         title: 'Choose an mJournal backup',
         buttonLabel: 'Check this backup',
         properties: ['openFile'],
-        filters: [{ name: 'mJournal backup', extensions: ['zip'] }],
+        filters: [{ name: 'mJournal backup', extensions: ['zip', 'mjbackup'] }],
+      };
+      const win = parent();
+      const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+      return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+    },
+
+    async chooseFolder(title) {
+      const options: Electron.OpenDialogOptions = {
+        title,
+        buttonLabel: 'Use this folder',
+        properties: ['openDirectory', 'createDirectory', 'promptToCreate'],
       };
       const win = parent();
       const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
@@ -64,6 +76,7 @@ export function electronPlatform(
 
     settingsChanged,
     updates,
+    desktopStatus,
 
     async openReleasePage() {
       // Always this fixed address, never one that came from the network.

@@ -1,28 +1,48 @@
 /** One day of the journal: today's page, or any earlier day. */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
-import type { AnswerRecord, DayData, EntryPatch, FeaturedPrompt, ImportResult, PhotoRecord, PromptInfo } from '@core/api';
-import { addDays, weekdayName, type DateKey } from '@core/dates';
-import { categoryLabel } from '@core/prompts';
+import type {
+  AnswerRecord,
+  DayData,
+  DayTag,
+  EntryPatch,
+  FeaturedPrompt,
+  ImportResult,
+  PhotoRecord,
+  PinnedPrompt,
+  PromptInfo,
+} from '@core/api';
+import { addDays, formatMonthName, monthOf, weekday, weekdayName, type DateKey } from '@core/dates';
+import { MAX_IMPORT_BATCH, MAX_PHOTOS_PER_DAY } from '@core/photos';
+import { categoryLabel, EVERY_WEEKDAY } from '@core/prompts';
+import { findMatches, parseSearch, type ParsedSearch } from '@core/search';
 import { countWords } from '@core/text';
 import { AutoTextarea } from '../components/AutoTextarea';
+import { BackupNudge } from '../components/BackupNudge';
 import { JournalArt, Sparkle, Sprig } from '../components/Decorations';
 import { confirm } from '../components/Dialog';
+import { DoodleDialog } from '../components/DoodleDialog';
 import { Icon } from '../components/Icon';
 import { Lightbox } from '../components/Lightbox';
 import { MoodIcon } from '../components/MoodIcon';
 import { EnergyPicker, MoodPicker } from '../components/MoodPicker';
 import { PhotoImage, photoAlt } from '../components/Photo';
 import { SaveIndicator } from '../components/SaveIndicator';
+import { SearchBanner } from '../components/SearchBanner';
+import { YearReviewCard } from '../components/YearReviewCard';
 import { Tip } from '../components/Tip';
+import { toast } from '../components/Toasts';
 import { api, errorMessage, native } from '../lib/api';
 import { useApp } from '../lib/app';
 import { invalidate, useQuery } from '../lib/data';
+import { refreshDay, useDayVersion } from '../lib/dayRefresh';
 import { greeting, welcomeLine } from '../lib/greeting';
 import { burst, clearNavDirection, peekNavDirection, setNavDirection, slideClass } from '../lib/motion';
 import { href, navigate } from '../lib/router';
 import { saveQueue } from '../lib/saveQueue';
 import { ensureThumbnails } from '../lib/thumbnails';
 import { useNow, useToday } from '../lib/time';
+import { FutureLetterDialog, FutureLetters, OpenedLetters } from './day/Letters';
+import { TagPicker } from './day/TagPicker';
 import { PromptPicker } from './PromptPicker';
 import './day.css';
 
@@ -35,12 +55,22 @@ interface AnswerState {
 const burstHearts = (anchor: Element | null) =>
   burst(anchor, { shape: 'heart', colors: ['var(--rose-400)', 'var(--rose-300)', 'var(--peach-300)'], count: 8, distance: 30 });
 
-export function DayView({ date }: { date: DateKey }) {
+/** Drag type for moving a photo within the day (files dropped from outside carry "Files" instead). */
+const PHOTO_DRAG_TYPE = 'application/x-mjournal-photo';
+
+export function DayView({ date, query = null }: { date: DateKey; query?: string | null }) {
   const today = useToday();
+  // Opened from a search: its matches are marked on the page.
+  const highlight = useMemo(() => (query ? parseSearch(query) : null), [query]);
   const isFuture = date > today;
-  const day = useQuery(`day:${date}`, () => api.entries.getDay(date));
+  // Bumped when the day changes elsewhere (undoing a delete, a quick note): the editor reloads.
+  const version = useDayVersion(date);
+  const dayKey = `day:${date}:${version}`;
+  const day = useQuery(dayKey, () => api.entries.getDay(date));
   const featured = useQuery(`featured:${date}`, () => (isFuture ? Promise.resolve(null) : api.prompts.featured(date)));
-  const ready = day.dataKey === `day:${date}` && featured.dataKey === `featured:${date}`;
+  const pinned = useQuery('pinned-prompts', () => api.prompts.pinned(), ['prompts']);
+  const ready =
+    day.dataKey === dayKey && featured.dataKey === `featured:${date}` && (pinned.data !== undefined || pinned.error !== null);
 
   useEffect(() => {
     return () => void saveQueue.flush();
@@ -49,6 +79,7 @@ export function DayView({ date }: { date: DateKey }) {
   return (
     <div className="page day-page">
       <DayHeader date={date} today={today} />
+      {query && <SearchBanner key={query} query={query} scope=".day-page" onDone={() => navigate(href.day(date), { replace: true })} />}
       {day.error ? (
         <p className="notice error" role="alert">
           <Icon name="info" size={16} />
@@ -64,7 +95,15 @@ export function DayView({ date }: { date: DateKey }) {
       ) : isFuture ? (
         <FutureDay date={date} />
       ) : (
-        <DayEditor key={date} date={date} today={today} initial={day.data!} initialFeatured={featured.data ?? null} />
+        <DayEditor
+          key={`${date}:${version}`}
+          date={date}
+          today={today}
+          initial={day.data!}
+          initialFeatured={featured.data ?? null}
+          initialPinned={pinned.data ?? []}
+          highlight={highlight}
+        />
       )}
     </div>
   );
@@ -75,8 +114,11 @@ function DayHeader({ date, today }: { date: DateKey; today: DateKey }) {
   const now = useNow();
   const isToday = date === today;
   const eyebrow = isToday ? 'Today' : date === addDays(today, -1) ? 'Yesterday' : weekdayName(date);
-  const streak = useQuery('streak', () => api.stats.overview(today, 'month'), ['entries']);
-  const current = streak.data?.streak.current ?? 0;
+  const streak = useQuery(`streak:${today}`, () => api.stats.streak(today), ['entries']);
+  const current = streak.data?.current ?? 0;
+  const month = monthOf(today);
+  const intention = useQuery(`intention:${month}`, () => api.months.intention(month), ['reflections']);
+  const firstWeek = Number(today.slice(8)) <= 7;
 
   return (
     <header className="page-header day-header">
@@ -91,6 +133,19 @@ function DayHeader({ date, today }: { date: DateKey; today: DateKey }) {
         ) : (
           <p className="subtitle muted">A page from your journal.</p>
         )}
+        {isToday && intention.data ? (
+          <p className="intention-line">
+            <Icon name="leaf" size={14} /> This month:{' '}
+            <a href={href.month(month)} className="intention-text">
+              {intention.data}
+            </a>
+          </p>
+        ) : isToday && intention.data === '' && firstWeek ? (
+          <p className="intention-line muted">
+            <Icon name="leaf" size={14} />{' '}
+            <a href={href.month(month)}>Set an intention for {formatMonthName(month)}?</a>
+          </p>
+        ) : null}
       </div>
       <div className="page-actions">
         {isToday && settings.showStreaks && current >= 2 && (
@@ -143,8 +198,9 @@ function FutureDay({ date }: { date: DateKey }) {
         <JournalArt />
       </div>
       <h2>This page is still blank</h2>
-      <p>{format.long(date)} hasn’t happened yet. It will be waiting for you.</p>
-      <a className="btn btn-primary" href={href.today()}>
+      <p>{format.long(date)} hasn’t happened yet. It will be waiting for you — and you can leave a letter for it.</p>
+      <FutureLetters date={date} />
+      <a className="btn btn-ghost" href={href.today()}>
         Go to today
       </a>
     </div>
@@ -160,23 +216,47 @@ function DayEditor({
   today,
   initial,
   initialFeatured,
+  initialPinned,
+  highlight,
 }: {
   date: DateKey;
   today: DateKey;
   initial: DayData;
   initialFeatured: FeaturedPrompt | null;
+  initialPinned: PinnedPrompt[];
+  highlight: ParsedSearch | null;
 }) {
   const { moods, visibleMoods, mood: moodFor, format } = useApp();
+  // Prompts asked every day appear on today's page (on their weekdays), first, even before they're answered.
+  const [pins, setPins] = useState(initialPinned);
+  const pinnedToday = (list: PinnedPrompt[]) =>
+    date === today ? list.filter((p) => (p.weekdays >> weekday(date)) & 1 && p.promptId !== initialFeatured?.promptId) : [];
   const [body, setBody] = useState(initial.entry?.body ?? '');
   const [moodNote, setMoodNote] = useState(initial.entry?.moodNote ?? '');
   const [mood, setMood] = useState<string | null>(initial.entry?.mood ?? null);
   const [energy, setEnergy] = useState<number | null>(initial.entry?.energy ?? null);
   const [favorite, setFavorite] = useState(initial.entry?.favorite ?? false);
-  const [answers, setAnswers] = useState(() => toAnswerMap(initial.answers));
+  const [answers, setAnswers] = useState(() => {
+    const map = toAnswerMap(initial.answers);
+    for (const pin of pinnedToday(initialPinned)) {
+      if (!map.has(pin.promptId)) map.set(pin.promptId, { promptText: pin.text, text: '', favorite: false });
+    }
+    return map;
+  });
   const [featured, setFeatured] = useState(initialFeatured);
-  const [extraIds, setExtraIds] = useState<string[]>(() =>
-    initial.answers.filter((a) => a.promptId !== initialFeatured?.promptId).map((a) => a.promptId),
-  );
+  const [extraIds, setExtraIds] = useState<string[]>(() => {
+    const pinnedIds = pinnedToday(initialPinned).map((p) => p.promptId);
+    const answered = initial.answers
+      .filter((a) => a.promptId !== initialFeatured?.promptId && !pinnedIds.includes(a.promptId))
+      .map((a) => a.promptId);
+    return [...pinnedIds, ...answered];
+  });
+  const pinnedIds = new Set(pins.map((p) => p.promptId));
+  /** The prompts asked on this very day (today's page, today's weekday). */
+  const pinnedTodayIds = new Set(pinnedToday(pins).map((p) => p.promptId));
+  const [dayTags, setDayTags] = useState<DayTag[]>(initial.tags);
+  const [futureLetter, setFutureLetter] = useState(false);
+  const [drawing, setDrawing] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [rejected, setRejected] = useState<ImportResult['rejected']>([]);
   const [lightbox, setLightbox] = useState<number | null>(null);
@@ -258,16 +338,41 @@ function DayEditor({
       });
       if (!ok) return;
     }
-    setExtraIds((ids) => ids.filter((id) => id !== promptId));
-    setAnswers((prev) => {
-      const next = new Map(prev);
-      next.delete(promptId);
-      return next;
-    });
+    if (pinnedTodayIds.has(promptId)) {
+      // Asked every day: the card stays, just empty again.
+      setAnswers((prev) => new Map(prev).set(promptId, { ...prev.get(promptId)!, text: '', favorite: false }));
+    } else {
+      setExtraIds((ids) => ids.filter((id) => id !== promptId));
+      setAnswers((prev) => {
+        const next = new Map(prev);
+        next.delete(promptId);
+        return next;
+      });
+    }
     try {
       await saveQueue.flush();
       await api.entries.removeAnswer(date, promptId);
       invalidate('entries');
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
+  const togglePin = async (promptId: string) => {
+    const wasPinned = pinnedIds.has(promptId);
+    try {
+      const next = await api.prompts.setPinned(promptId, wasPinned ? null : EVERY_WEEKDAY);
+      setPins(next);
+      invalidate('prompts');
+      if (wasPinned && !answers.get(promptId)?.text.trim()) {
+        setExtraIds((ids) => ids.filter((id) => id !== promptId));
+        setAnswers((prev) => {
+          const map = new Map(prev);
+          map.delete(promptId);
+          return map;
+        });
+      }
+      toast(wasPinned ? 'This question won’t be asked every day any more' : 'You’ll be asked this every day — change it in Settings → Prompts');
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -342,27 +447,70 @@ function DayEditor({
     }
   };
 
+  // Reordering: drag a photo onto another one, or use "Move earlier/later" in the photo viewer.
+  const [dragged, setDragged] = useState<string | null>(null);
+  const [dropBefore, setDropBefore] = useState<{ id: string; before: boolean } | null>(null);
+  const saveOrder = async (ids: string[]) => {
+    try {
+      await api.photos.reorder(date, ids);
+      photosQuery.reload();
+      invalidate('photos');
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+  const dropPhoto = (targetId: string, before: boolean) => {
+    const moving = dragged;
+    setDragged(null);
+    setDropBefore(null);
+    if (!moving || moving === targetId) return;
+    const ids = photos.map((p) => p.id).filter((id) => id !== moving);
+    const at = ids.indexOf(targetId) + (before ? 0 : 1);
+    ids.splice(at, 0, moving);
+    void saveOrder(ids);
+  };
+  const shiftPhoto = async (id: string, delta: -1 | 1) => {
+    const ids = photos.map((p) => p.id);
+    const from = ids.indexOf(id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    await saveOrder(ids);
+    setLightbox(to);
+  };
+
   const importFiles = useCallback(
     async (files: File[]) => {
-      const images = files.slice(0, 30);
-      if (images.length === 0) return;
+      if (files.length === 0) return;
+      // A day holds at most MAX_PHOTOS_PER_DAY photos, so there's no point reading more files than that.
+      const images = files.slice(0, MAX_PHOTOS_PER_DAY);
+      const result: ImportResult = {
+        imported: [],
+        rejected: files
+          .slice(MAX_PHOTOS_PER_DAY)
+          .map((file) => ({ name: file.name || 'image', reason: `A day can hold up to ${MAX_PHOTOS_PER_DAY} photos.` })),
+      };
       try {
-        const withPaths = images.map((file) => ({ file, path: native.pathForFile(file) }));
-        const byPath = withPaths.filter((f) => f.path).map((f) => f.path);
-        const result: ImportResult = { imported: [], rejected: [] };
-        if (byPath.length > 0) {
-          const r = await api.photos.importFiles(date, byPath);
-          result.imported.push(...r.imported);
-          result.rejected.push(...r.rejected);
-        }
-        const inMemory = withPaths.filter((f) => !f.path);
-        if (inMemory.length > 0) {
-          const data = await Promise.all(
-            inMemory.map(async ({ file }) => ({ name: file.name || 'pasted-image.png', data: new Uint8Array(await file.arrayBuffer()) })),
-          );
-          const r = await api.photos.importData(date, data);
-          result.imported.push(...r.imported);
-          result.rejected.push(...r.rejected);
+        // Sent in batches: the main process accepts MAX_IMPORT_BATCH files per call.
+        for (let start = 0; start < images.length; start += MAX_IMPORT_BATCH) {
+          const withPaths = images
+            .slice(start, start + MAX_IMPORT_BATCH)
+            .map((file) => ({ file, path: native.pathForFile(file) }));
+          const byPath = withPaths.filter((f) => f.path).map((f) => f.path);
+          if (byPath.length > 0) {
+            const r = await api.photos.importFiles(date, byPath);
+            result.imported.push(...r.imported);
+            result.rejected.push(...r.rejected);
+          }
+          const inMemory = withPaths.filter((f) => !f.path);
+          if (inMemory.length > 0) {
+            const data = await Promise.all(
+              inMemory.map(async ({ file }) => ({ name: file.name || 'pasted-image.png', data: new Uint8Array(await file.arrayBuffer()) })),
+            );
+            const r = await api.photos.importData(date, data);
+            result.imported.push(...r.imported);
+            result.rejected.push(...r.rejected);
+          }
         }
         handleImport(result);
       } catch (err) {
@@ -409,23 +557,29 @@ function DayEditor({
   const deleteDay = async () => {
     const ok = await confirm({
       title: 'Delete this day’s entry?',
-      body: `Your writing, mood, energy and answers for ${format.long(date)} will be deleted. Photos from this day move to “Recently removed” in Settings, where you can restore them.`,
+      body: `Your writing, mood, energy, answers, tags and photos for ${format.long(date)} move to “Recently removed” in Settings, where you can restore them.`,
       confirmLabel: 'Delete entry',
       tone: 'danger',
     });
     if (!ok) return;
     try {
       await saveQueue.flush();
-      await api.entries.remove(date);
+      const { removedId } = await api.entries.remove(date);
       invalidate('entries', 'photos');
-      setBody('');
-      setMoodNote('');
-      setMood(null);
-      setEnergy(null);
-      setFavorite(false);
-      setAnswers(new Map());
-      setExtraIds([]);
-      photosQuery.reload();
+      refreshDay(date);
+      if (removedId !== null) {
+        toast('Entry deleted', {
+          label: 'Undo',
+          onClick: () =>
+            void api.entries.restoreRemoved(removedId).then(
+              () => {
+                invalidate('entries', 'photos', 'tags');
+                refreshDay(date);
+              },
+              (err: unknown) => toast(errorMessage(err)),
+            ),
+        });
+      }
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -435,8 +589,19 @@ function DayEditor({
   const words = countWords(body);
   const selectedMood = moodFor(mood);
   const hasContent = Boolean(
-    body.trim() || moodNote.trim() || mood || energy || photos.length > 0 || [...answers.values()].some((a) => a.text.trim()),
+    body.trim() ||
+      moodNote.trim() ||
+      mood ||
+      energy ||
+      photos.length > 0 ||
+      dayTags.length > 0 ||
+      [...answers.values()].some((a) => a.text.trim()),
   );
+  // #tags follow the writing, so the chips are reloaded after saves.
+  const tagsQuery = useQuery(`day-tags:${date}`, () => api.tags.forDay(date), ['entries', 'tags']);
+  useEffect(() => {
+    if (tagsQuery.data) setDayTags(tagsQuery.data);
+  }, [tagsQuery.data]);
 
   // A small celebration when today's page gets its first saved thing.
   const hadContent = useRef(hasContent);
@@ -469,6 +634,9 @@ function DayEditor({
       )}
 
       <div className={`day-main${entering ? ' stagger' : ''}`}>
+        <OpenedLetters date={date} highlight={highlight} />
+        {date === today && <BackupNudge />}
+        {date === today && <YearReviewCard today={today} />}
         {date === today && (
           <Tip id="today" icon="image-plus">
             <strong>Tip:</strong> drag photos straight onto the page, or paste a screenshot, to add them to the day.{' '}
@@ -529,6 +697,7 @@ function DayEditor({
               id={`answer-${featured.promptId}`}
               aria-labelledby="featured-question"
               value={featuredAnswer}
+              highlight={highlight}
               minRows={2}
               placeholder="A word, a line or a whole page — whatever feels right."
               onChange={(event) => updateAnswer(featured.promptId, featured.text, event.target.value)}
@@ -561,12 +730,25 @@ function DayEditor({
         {extraIds.map((promptId) => {
           const state = answers.get(promptId);
           if (!state) return null;
+          const isPinned = pinnedIds.has(promptId);
+          // An unanswered card of a question asked every day has nothing to remove: it would come back.
+          const removable = !(pinnedTodayIds.has(promptId) && !state.text.trim());
           return (
-            <section key={promptId} className="card answer-card" aria-labelledby={`q-${promptId}`}>
+            <section key={promptId} className={`card answer-card${isPinned ? ' pinned' : ''}`} aria-labelledby={`q-${promptId}`}>
               <div className="answer-top">
                 <h3 id={`q-${promptId}`} className="answer-question">
                   {state.promptText}
                 </h3>
+                <button
+                  type="button"
+                  className="icon-btn pin-btn"
+                  aria-pressed={isPinned}
+                  aria-label={isPinned ? 'Stop asking this every day' : 'Ask me this every day'}
+                  title={isPinned ? 'Asked every day — click to stop' : 'Ask me this every day'}
+                  onClick={() => void togglePin(promptId)}
+                >
+                  <Icon name="pin" size={16} />
+                </button>
                 <button
                   type="button"
                   className="icon-btn"
@@ -584,20 +766,23 @@ function DayEditor({
                     className={state.favorite ? 'heart-pop' : undefined}
                   />
                 </button>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  aria-label="Remove this prompt"
-                  title="Remove this prompt"
-                  onClick={() => void removePrompt(promptId)}
-                >
-                  <Icon name="close" size={17} />
-                </button>
+                {removable && (
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    aria-label="Remove this prompt"
+                    title="Remove this prompt"
+                    onClick={() => void removePrompt(promptId)}
+                  >
+                    <Icon name="close" size={17} />
+                  </button>
+                )}
               </div>
               <AutoTextarea
                 id={`answer-${promptId}`}
                 aria-labelledby={`q-${promptId}`}
                 value={state.text}
+                highlight={highlight}
                 minRows={2}
                 placeholder="Take your time…"
                 onChange={(event) => updateAnswer(promptId, state.promptText, event.target.value)}
@@ -624,6 +809,7 @@ function DayEditor({
             aria-labelledby="free-writing"
             className="lined"
             value={body}
+            highlight={highlight}
             minRows={7}
             placeholder="Anything else on your mind? Write freely…"
             onChange={(event) => {
@@ -648,12 +834,18 @@ function DayEditor({
             <Icon key={String(favorite)} name="heart" size={16} filled={favorite} className={favorite ? 'heart-pop' : undefined} />
             {favorite ? 'A favorite day' : 'Mark as a favorite day'}
           </button>
+          {date === today && (
+            <button type="button" className="btn btn-ghost" onClick={() => setFutureLetter(true)}>
+              <Icon name="envelope" size={16} /> Write to a future day…
+            </button>
+          )}
           {hasContent && (
             <button type="button" className="btn btn-ghost" onClick={() => void deleteDay()}>
               <Icon name="trash" size={16} /> Delete entry
             </button>
           )}
         </div>
+        <FutureLetterDialog open={futureLetter} onClose={() => setFutureLetter(false)} />
       </div>
 
       <section className="card day-checkin" aria-labelledby="checkin-title">
@@ -683,6 +875,7 @@ function DayEditor({
             <AutoTextarea
               className="mood-note-input"
               value={moodNote}
+              highlight={highlight}
               minRows={1}
               maxLength={2000}
               placeholder="A few words, if you like"
@@ -705,6 +898,7 @@ function DayEditor({
             }}
           />
         </div>
+        <TagPicker date={date} tags={dayTags} onChange={setDayTags} />
       </section>
 
       <section className="card day-photos" aria-labelledby="photos-title">
@@ -713,20 +907,61 @@ function DayEditor({
           <h2 id="photos-title">Photos</h2>
           <span className="spacer" />
           {photos.length > 0 && (
-            <button type="button" className="btn btn-sm" onClick={() => void pickPhotos()}>
-              <Icon name="plus" size={14} /> Add
-            </button>
+            <>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDrawing(true)}>
+                <Icon name="brush" size={14} /> Draw
+              </button>
+              <button type="button" className="btn btn-sm" onClick={() => void pickPhotos()}>
+                <Icon name="plus" size={14} /> Add
+              </button>
+            </>
           )}
         </div>
         {photos.length > 0 ? (
           <ul className="photo-grid stagger" aria-label="Photos from this day">
             {photos.map((photo, i) => (
-              <li key={photo.id}>
+              <li
+                key={photo.id}
+                className={
+                  [
+                    dragged === photo.id && 'is-dragged',
+                    dropBefore?.id === photo.id && (dropBefore.before ? 'drop-before' : 'drop-after'),
+                  ]
+                    .filter(Boolean)
+                    .join(' ') || undefined
+                }
+                onDragOver={(event) => {
+                  if (!dragged || !event.dataTransfer.types.includes(PHOTO_DRAG_TYPE)) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                  const box = event.currentTarget.getBoundingClientRect();
+                  const before = event.clientX < box.left + box.width / 2;
+                  if (dropBefore?.id !== photo.id || dropBefore.before !== before) setDropBefore({ id: photo.id, before });
+                }}
+                onDrop={(event) => {
+                  if (!event.dataTransfer.types.includes(PHOTO_DRAG_TYPE)) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  dropPhoto(photo.id, dropBefore?.id === photo.id ? dropBefore.before : true);
+                }}
+              >
                 <button
                   type="button"
-                  className={`photo-tile${freshPhotos.has(photo.id) ? ' developing' : ''}`}
+                  className={`photo-tile${freshPhotos.has(photo.id) ? ' developing' : ''}${
+                    highlight && findMatches(photo.caption, highlight).length > 0 ? ' search-hit' : ''
+                  }`}
                   onClick={() => setLightbox(i)}
                   aria-label={`Open ${photoAlt(photo, format.long(date))}`}
+                  draggable={photos.length > 1}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData(PHOTO_DRAG_TYPE, photo.id);
+                    event.dataTransfer.effectAllowed = 'move';
+                    setDragged(photo.id);
+                  }}
+                  onDragEnd={() => {
+                    setDragged(null);
+                    setDropBefore(null);
+                  }}
                 >
                   <PhotoImage photo={photo} alt="" />
                   {photo.favorite && (
@@ -739,15 +974,21 @@ function DayEditor({
             ))}
           </ul>
         ) : (
-          <button type="button" className="photo-drop" onClick={() => void pickPhotos()}>
-            <Icon name="image-plus" size={24} />
-            <span>
-              <strong>Add photos</strong>
-              <br />
-              <span className="muted">or drop them here · paste works too</span>
-            </span>
-          </button>
+          <>
+            <button type="button" className="photo-drop" onClick={() => void pickPhotos()}>
+              <Icon name="image-plus" size={24} />
+              <span>
+                <strong>Add photos</strong>
+                <br />
+                <span className="muted">or drop them here · paste works too</span>
+              </span>
+            </button>
+            <button type="button" className="btn btn-sm btn-ghost draw-something" onClick={() => setDrawing(true)}>
+              <Icon name="brush" size={14} /> Or draw something
+            </button>
+          </>
         )}
+        <DoodleDialog open={drawing} date={date} onClose={() => setDrawing(false)} onSaved={handleImport} />
         {rejected.length > 0 && (
           <div className="notice" role="status">
             <Icon name="info" size={16} />
@@ -780,6 +1021,7 @@ function DayEditor({
           onIndexChange={setLightbox}
           onClose={() => setLightbox(null)}
           onChanged={() => photosQuery.reload()}
+          onShift={(id, delta) => void shiftPhoto(id, delta)}
         />
       )}
     </div>

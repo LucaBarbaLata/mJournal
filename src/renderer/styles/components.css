@@ -213,6 +213,39 @@
   outline: none;
 }
 
+/* Search matches marked in a writing field: a mirror of its text lies behind the transparent textarea. */
+.writing-wrap {
+  position: relative;
+  display: block;
+}
+.writing-wrap > .writing {
+  position: relative;
+  z-index: 1;
+}
+.writing-highlights {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+  user-select: none;
+}
+.writing-highlights mark,
+.letter-body mark {
+  border-radius: 3px;
+  background: var(--mark);
+  color: inherit;
+}
+.writing-highlights mark {
+  color: transparent;
+}
+mark.search-current {
+  background: var(--peach-300);
+  box-shadow: 0 0 0 2px var(--peach-300);
+}
+
 .lined {
   --line-gap: calc(var(--writing-size) * var(--writing-leading));
   background-image: repeating-linear-gradient(
@@ -598,6 +631,18 @@ dialog.dialog::backdrop {
 .tip-dismiss {
   flex: none;
 }
+/* A tip with a short paragraph and its own buttons (the backup reminder on Today). */
+.tip-body {
+  flex: 1;
+  display: grid;
+  gap: 8px;
+}
+.tip-body p {
+  margin: 0;
+}
+.tip-body strong {
+  color: var(--ink);
+}
 
 /* ---------- Tooltip-like hint ---------- */
 .kbd {
@@ -612,4 +657,32 @@ dialog.dialog::backdrop {
   font-weight: 700;
   text-align: center;
   color: var(--ink-soft);
+}
+
+/* ---------- Search matches on a page opened from a search ---------- */
+.search-banner {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 8px 10px 8px 14px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--text-sm);
+}
+.search-banner-text strong {
+  color: var(--ink);
+}
+.photo-tile.search-hit {
+  outline: 3px solid var(--mark);
+  outline-offset: 2px;
+}
+.photo-tile.search-hit.search-current {
+  outline-color: var(--peach-300);
 }

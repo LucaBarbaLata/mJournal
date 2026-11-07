@@ -1,12 +1,13 @@
 /**
  * Reflection prompts: the featured question of each day, favorites, hidden
- * prompts and the user's own custom prompts.
+ * prompts, prompts asked every day and the user's own custom prompts.
  */
-import type { FeaturedPrompt, PromptInfo } from '@core/api';
+import type { FeaturedPrompt, PinnedPrompt, PromptInfo } from '@core/api';
 import { addDays, type DateKey } from '@core/dates';
 import { RECENT_WINDOW_DAYS, selectFeaturedPrompt } from '@core/promptSelection';
 import {
   BUILT_IN_PROMPTS,
+  EVERY_WEEKDAY,
   RETIRED_PROMPT_IDS,
   customPromptId,
   findBuiltInPrompt,
@@ -38,6 +39,9 @@ interface PrefRow {
 }
 
 export const MAX_CUSTOM_PROMPTS = 500;
+/** Prompts that can be asked every day at once. */
+export const MAX_PINNED_PROMPTS = 3;
+export { EVERY_WEEKDAY };
 
 export class PromptStore {
   constructor(
@@ -223,6 +227,48 @@ export class PromptStore {
   archiveCustom(id: string): void {
     const rowId = parseCustomPromptId(id);
     if (rowId === null) throw new UserFacingError('unknown-prompt', 'That prompt could not be found.');
-    this.db.run('UPDATE custom_prompts SET archived = 1, updated_at = ? WHERE id = ?', [this.now(), rowId]);
+    this.db.transaction(() => {
+      this.db.run('UPDATE custom_prompts SET archived = 1, updated_at = ? WHERE id = ?', [this.now(), rowId]);
+      this.db.run('DELETE FROM pinned_prompts WHERE prompt_id = ?', [id]);
+    });
+  }
+
+  /** The prompts asked every day (or on some weekdays), in their order. */
+  pinned(): PinnedPrompt[] {
+    return this.db
+      .all<{ prompt_id: string; weekdays: number }>('SELECT prompt_id, weekdays FROM pinned_prompts ORDER BY position, created_at')
+      .flatMap((row) => {
+        const resolved = this.resolve(row.prompt_id);
+        return resolved ? [{ promptId: row.prompt_id, text: resolved.text, category: resolved.category, weekdays: row.weekdays }] : [];
+      });
+  }
+
+  /** Asks a prompt on the weekdays in `weekdays` (a bitmask), or stops asking it (null). */
+  setPinned(id: string, weekdays: number | null): PinnedPrompt[] {
+    this.assertKnown(id);
+    this.db.transaction(() => {
+      if (weekdays === null) {
+        this.db.run('DELETE FROM pinned_prompts WHERE prompt_id = ?', [id]);
+        return;
+      }
+      if (!Number.isInteger(weekdays) || weekdays < 1 || weekdays > EVERY_WEEKDAY) {
+        throw new UserFacingError('invalid-weekdays', 'Please choose at least one day of the week.');
+      }
+      const existing = this.db.get('SELECT 1 AS x FROM pinned_prompts WHERE prompt_id = ?', [id]);
+      if (existing) {
+        this.db.run('UPDATE pinned_prompts SET weekdays = ? WHERE prompt_id = ?', [weekdays, id]);
+        return;
+      }
+      const count = this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM pinned_prompts')!.n;
+      if (count >= MAX_PINNED_PROMPTS) {
+        throw new UserFacingError('too-many-pinned', `Up to ${MAX_PINNED_PROMPTS} questions can be asked every day. Stop asking one first.`);
+      }
+      this.db.run(
+        `INSERT INTO pinned_prompts (prompt_id, weekdays, position, created_at)
+         VALUES (?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM pinned_prompts), ?)`,
+        [id, weekdays, this.now()],
+      );
+    });
+    return this.pinned();
   }
 }

@@ -20,6 +20,7 @@ import yazl from 'yazl';
 import { UserFacingError } from '@core/validation';
 import type { Journal } from '../journal';
 import { Db } from '../store/database';
+import { encryptingStream, type BackupKey } from './backupCrypto';
 import { renameWithRetry } from './fsutil';
 
 export const BACKUP_KIND = 'mjournal-backup';
@@ -76,12 +77,16 @@ function countRows(dbPath: string): BackupManifest['counts'] {
   }
 }
 
-/** Writes a complete backup to `target`. The file only appears once it is complete. */
+/**
+ * Writes a complete backup to `target`. The file only appears once it is complete. With a `key`, the
+ * .zip is encrypted as it is written (see backupCrypto.ts), so no unprotected copy ever touches the disk.
+ */
 export async function writeBackup(
   journal: Journal,
   target: string,
   appVersion: string,
-): Promise<{ bytes: number; manifest: BackupManifest }> {
+  options: { key?: BackupKey | null } = {},
+): Promise<{ bytes: number; manifest: BackupManifest; encrypted: boolean }> {
   await mkdir(journal.paths.temp, { recursive: true });
   const temp = await mkdtemp(join(journal.paths.temp, 'backup-'));
   const partial = `${target}.partial`;
@@ -129,7 +134,8 @@ export async function writeBackup(
       });
     }
     zip.end();
-    await pipeline(zip.outputStream, createWriteStream(partial));
+    if (options.key) await pipeline(zip.outputStream, encryptingStream(options.key), createWriteStream(partial));
+    else await pipeline(zip.outputStream, createWriteStream(partial));
     const handle = await open(partial, 'r+');
     try {
       await handle.sync();
@@ -137,7 +143,7 @@ export async function writeBackup(
       await handle.close();
     }
     await renameWithRetry(partial, target);
-    return { bytes: (await stat(target)).size, manifest };
+    return { bytes: (await stat(target)).size, manifest, encrypted: Boolean(options.key) };
   } catch (err) {
     await rm(partial, { force: true });
     throw err;

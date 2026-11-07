@@ -202,6 +202,8 @@ describe('While locked, the API', () => {
     notificationsSupported: false,
     chooseImages: async () => [],
     chooseBackupFile: async () => null,
+    chooseFolder: async () => null,
+    desktopStatus: () => ({ canOpenAtLogin: false, trayShown: false, shortcut: null }),
     chooseSaveLocation: async () => null,
     showItemInFolder: () => undefined,
     openFolder: async () => undefined,

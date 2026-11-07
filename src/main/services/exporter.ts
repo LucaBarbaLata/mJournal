@@ -5,7 +5,7 @@
  */
 import { weekdayName } from '@core/dates';
 import { energyLabel } from '@core/moods';
-import { MONTHLY_QUESTIONS, MONTHLY_LETTER_KEY } from '@core/prompts';
+import { MONTHLY_INTENTION_KEY, MONTHLY_QUESTIONS, MONTHLY_LETTER_KEY, YEARLY_LETTER_KEY, YEARLY_QUESTIONS } from '@core/prompts';
 import type { Journal } from '../journal';
 
 export const EXPORT_KIND = 'mjournal-export';
@@ -48,12 +48,19 @@ export function buildJsonExport(journal: Journal, appVersion: string) {
   };
   const answersByDay = group(answers);
   const photosByDay = group(photos);
+  const tagsByDay = group(
+    journal.db.all<{ entry_date: string; label: string; picked: number; written: number }>(
+      `SELECT et.entry_date, t.label, et.picked, et.written FROM entry_tags et JOIN tags t ON t.name = et.tag
+       ORDER BY et.entry_date, t.label COLLATE NOCASE`,
+    ),
+  );
 
   const reflections = journal.db.all<{ month: string; question: string; answer: string; updated_at: string }>(
     "SELECT month, question, answer, updated_at FROM monthly_reflections WHERE answer <> '' ORDER BY month",
   );
   const questionText = new Map<string, string>(MONTHLY_QUESTIONS.map((q) => [q.key, q.text]));
   questionText.set(MONTHLY_LETTER_KEY, 'Letter to myself');
+  questionText.set(MONTHLY_INTENTION_KEY, 'My intention for the month');
   const months = new Map<string, { month: string; answers: { key: string; question: string; answer: string }[]; updatedAt: string }>();
   for (const r of reflections) {
     const month = months.get(r.month) ?? { month: r.month, answers: [], updatedAt: r.updated_at };
@@ -85,6 +92,7 @@ export function buildJsonExport(journal: Journal, appVersion: string) {
         answer: a.answer,
         favorite: a.favorite === 1,
       })),
+      tags: (tagsByDay.get(row.date) ?? []).map((t) => t.label),
       photos: (photosByDay.get(row.date) ?? []).map((p) => ({
         file: `photos/${p.file}`,
         originalName: p.original_name,
@@ -97,6 +105,26 @@ export function buildJsonExport(journal: Journal, appVersion: string) {
       updatedAt: row.updated_at,
     })),
     monthlyReflections: [...months.values()],
+    yearlyReflections: (() => {
+      const yearText = new Map<string, string>(YEARLY_QUESTIONS.map((q) => [q.key, q.text]));
+      yearText.set(YEARLY_LETTER_KEY, 'Letter to myself');
+      const years = new Map<number, { year: number; answers: { key: string; question: string; answer: string }[]; updatedAt: string }>();
+      for (const r of journal.db.all<{ year: number; question: string; answer: string; updated_at: string }>(
+        "SELECT year, question, answer, updated_at FROM yearly_reflections WHERE answer <> '' ORDER BY year",
+      )) {
+        const year = years.get(r.year) ?? { year: r.year, answers: [], updatedAt: r.updated_at };
+        year.answers.push({ key: r.question, question: yearText.get(r.question) ?? r.question, answer: r.answer });
+        if (r.updated_at > year.updatedAt) year.updatedAt = r.updated_at;
+        years.set(r.year, year);
+      }
+      return [...years.values()];
+    })(),
+    lettersToTheFuture: journal.db
+      .all<{ open_on: string; written_on: string; body: string; opened_at: string | null }>(
+        "SELECT open_on, written_on, body, opened_at FROM capsules WHERE body <> '' ORDER BY open_on, id",
+      )
+      .map((c) => ({ opensOn: c.open_on, writtenOn: c.written_on, letter: c.body, openedAt: c.opened_at })),
+    tags: journal.tags.list().map((t) => ({ label: t.label, quickChip: t.quick, days: t.days })),
     moods: moods.map((m) => ({ key: m.key, label: m.label, icon: m.icon, color: m.color, hidden: m.hidden, builtIn: m.builtIn })),
     customPrompts: journal.prompts
       .library()
@@ -129,6 +157,7 @@ export const CSV_COLUMNS = [
   'mood_note',
   'writing',
   'prompt_answers',
+  'tags',
 ] as const;
 
 export function buildCsv(journal: Journal): string {
@@ -148,6 +177,7 @@ export function buildCsv(journal: Journal): string {
         entry.moodNote,
         entry.body,
         entry.answers.map((a) => `${a.question} ${a.answer}`).join('\n\n'),
+        entry.tags.join(', '),
       ]
         .map(csvCell)
         .join(','),

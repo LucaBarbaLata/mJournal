@@ -3,6 +3,8 @@
  * nothing about Electron, so tests can open a journal in a temporary folder.
  */
 import { mkdirSync } from 'node:fs';
+import { todayKey } from '@core/dates';
+import { CapsuleStore } from './store/capsules';
 import { Db } from './store/database';
 import { EntriesStore } from './store/entries';
 import { migrate, type MigrationOutcome } from './store/migrations';
@@ -10,9 +12,13 @@ import { MoodStore } from './store/moods';
 import { PhotoStore } from './store/photos';
 import { PromptStore } from './store/prompts';
 import { ReflectionStore } from './store/reflections';
+import { RemovedDaysStore } from './store/removedDays';
 import { SearchStore } from './store/search';
 import { defaultSettings, SettingsStore } from './store/settings';
 import { StatsStore } from './store/stats';
+import { TagStore } from './store/tags';
+import { WritingIndex } from './store/writingIndex';
+import { YearStore } from './store/years';
 import { dataPaths, type DataPaths } from './paths';
 import { PhotoFiles } from './services/photoFiles';
 import { UserFacingError } from '@core/validation';
@@ -30,6 +36,11 @@ export class Journal {
   readonly moods: MoodStore;
   readonly photos: PhotoStore;
   readonly reflections: ReflectionStore;
+  readonly tags: TagStore;
+  readonly removedDays: RemovedDaysStore;
+  readonly capsules: CapsuleStore;
+  readonly writing: WritingIndex;
+  readonly years: YearStore;
   readonly search: SearchStore;
   readonly stats: StatsStore;
   readonly settings: SettingsStore;
@@ -46,7 +57,12 @@ export class Journal {
     this.entries = new EntriesStore(db, now, (key) => this.moods.exists(key));
     this.prompts = new PromptStore(db, now);
     this.photos = new PhotoStore(db, now, new PhotoFiles(paths.photos, paths.thumbnails), this.entries);
-    this.reflections = new ReflectionStore(db, now, this.entries, this.photos);
+    this.writing = new WritingIndex(db);
+    this.reflections = new ReflectionStore(db, now, this.entries, this.photos, this.writing);
+    this.tags = new TagStore(db, now, this.entries);
+    this.removedDays = new RemovedDaysStore(db, now, this.entries, this.photos, this.tags);
+    this.capsules = new CapsuleStore(db, clock, this.writing);
+    this.years = new YearStore(db, now, this.entries, this.photos, this.writing);
     this.search = new SearchStore(db);
     this.stats = new StatsStore(db, this.entries);
     this.settings = new SettingsStore(db, now, defaultSettings(regionCode));
@@ -75,12 +91,20 @@ export class Journal {
       }
       const migration = migrate(db, { snapshotDir: paths.snapshots, now: clock });
       const journal = new Journal(paths, db, clock, migration, regionCode);
-      if (migration.from > 0 && migration.from !== migration.to) journal.entries.refreshAll();
+      if (migration.from > 0 && migration.from !== migration.to) journal.refreshDerived();
+      // Letters whose day came while mJournal was closed become searchable.
+      else journal.writing.indexOpenedCapsules(todayKey(clock()));
       return journal;
     } catch (err) {
       db.close();
       throw err;
     }
+  }
+
+  /** Recalculates everything derived from the data: day counters, #tags, both search indexes. */
+  refreshDerived(): void {
+    this.entries.refreshAll();
+    this.writing.reindexAll(todayKey(this.clock()));
   }
 
   close(): void {

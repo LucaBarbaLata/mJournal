@@ -1,14 +1,15 @@
-/** A small hash router: #/today, #/day/2026-10-24, #/calendar/2026-10, #/journal?q=…, … */
+/** A small hash router: #/today, #/day/2026-10-24?q=walk, #/calendar/2026-10, #/journal?q=…, #/year/2026, … */
 import { useSyncExternalStore } from 'react';
 import { isDateKey, isMonthKey, type DateKey, type MonthKey } from '@core/dates';
 
 export type Route =
   | { name: 'today' }
-  | { name: 'day'; date: DateKey }
+  | { name: 'day'; date: DateKey; query: string | null }
   | { name: 'calendar'; month: MonthKey | null; selected: DateKey | null }
   | { name: 'journal'; params: URLSearchParams }
   | { name: 'memories'; params: URLSearchParams }
-  | { name: 'month'; month: MonthKey | null }
+  | { name: 'month'; month: MonthKey | null; query: string | null }
+  | { name: 'year'; year: number | null; query: string | null }
   | { name: 'insights' }
   | { name: 'settings'; section: string | null };
 
@@ -21,7 +22,7 @@ export function parseHash(hash: string): Route {
   const params = new URLSearchParams(query);
   switch (parts[0]) {
     case 'day':
-      return isDateKey(parts[1]) ? { name: 'day', date: parts[1] } : { name: 'today' };
+      return isDateKey(parts[1]) ? { name: 'day', date: parts[1], query: params.get('q') || null } : { name: 'today' };
     case 'calendar': {
       const selected = params.get('d');
       return {
@@ -35,7 +36,9 @@ export function parseHash(hash: string): Route {
     case 'memories':
       return { name: 'memories', params };
     case 'month':
-      return { name: 'month', month: isMonthKey(parts[1]) ? parts[1] : null };
+      return { name: 'month', month: isMonthKey(parts[1]) ? parts[1] : null, query: params.get('q') || null };
+    case 'year':
+      return { name: 'year', year: /^\d{4}$/.test(parts[1] ?? '') ? Number(parts[1]) : null, query: params.get('q') || null };
     case 'insights':
       return { name: 'insights' };
     case 'settings':
@@ -79,11 +82,13 @@ const query = (params: Record<string, string | undefined | null | false>) => {
 
 export const href = {
   today: () => '#/today',
-  day: (date: DateKey) => `#/day/${date}`,
+  /** A day's page; with `q`, the search's matches are highlighted on it. */
+  day: (date: DateKey, q?: string | null) => `#/day/${date}${query({ q })}`,
   calendar: (month?: MonthKey, selected?: DateKey) => `#/calendar${month ? `/${month}` : ''}${query({ d: selected })}`,
   journal: (params: Record<string, string | undefined | null | false> = {}) => `#/journal${query(params)}`,
   memories: (params: Record<string, string | undefined | null | false> = {}) => `#/memories${query(params)}`,
-  month: (month?: MonthKey) => `#/month${month ? `/${month}` : ''}`,
+  month: (month?: MonthKey, q?: string | null) => `#/month${month ? `/${month}` : ''}${query({ q })}`,
+  year: (year?: number, q?: string | null) => `#/year${year ? `/${year}` : ''}${query({ q })}`,
   insights: () => '#/insights',
   settings: (section?: string) => `#/settings${section ? `/${section}` : ''}`,
 };

@@ -10,17 +10,18 @@
  *   ~/.cache/mJournal/Chromium on Linux (no journal content).
  * Development builds use "mJournal-dev" so they never touch a real journal.
  */
-import { app, BrowserWindow, dialog, Menu, nativeTheme, powerMonitor, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, Menu, nativeTheme, powerMonitor, screen, session, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { EVENTS } from '@core/api';
+import { EVENTS, type DesktopStatus, type Settings } from '@core/api';
 import { todayKey } from '@core/dates';
 import { LATEST_RELEASE_API } from '@core/updates';
 import { UserFacingError } from '@core/validation';
 import icon from '../../resources/icon.png?asset';
 import { createApi } from './api';
+import { applyOpenAtLogin, autostartExecutable, HIDDEN_ARG } from './autostart';
 import { JournalHost } from './host';
 import { AppLock } from './lock';
 import { registerIpc } from './ipc';
@@ -29,11 +30,13 @@ import { dataPaths } from './paths';
 import { electronPlatform } from './platform';
 import { APP_ORIGIN, handleAppProtocol, handleMediaProtocol, registerSchemes } from './protocols';
 import { Reminder } from './reminders';
+import { AUTO_BACKUP_CHECK_INTERVAL_MS, Backups } from './services/backups';
 import { fileStamp } from './services/fsutil';
-import { maybeTakeDailySnapshot } from './services/snapshots';
+import { maybeTakeDailySnapshot, SNAPSHOT_CHECK_INTERVAL_MS } from './services/snapshots';
 import { UpdateInstaller, type InstallTarget } from './services/updateInstaller';
 import { UpdateChecker } from './services/updates';
-import { createMainWindow, type WindowState } from './window';
+import { TrayIcon } from './tray';
+import { createMainWindow, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, type WindowState } from './window';
 
 // Errors nothing else caught go to the log, so a bug report can include them. The monitor only
 // watches: Electron still shows its error dialog for an uncaught exception, as before.
@@ -136,11 +139,71 @@ function installTarget(): InstallTarget | null {
 /** Runs once mJournal has closed the journal and is about to end: the Windows installer starts here. */
 let afterQuit: (() => void) | null = null;
 
+/**
+ * Set when mJournal is really ending (Quit in the tray, an update, the computer shutting down): closing the
+ * window then closes it, even when mJournal is kept in the tray.
+ */
+let quitting = false;
+app.on('before-quit', () => {
+  quitting = true;
+});
+
 /** Closes mJournal the usual way, so what is being typed is saved first. */
 function quitForUpdate(then?: () => void): void {
   afterQuit = then ?? null;
+  quitting = true;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
   else app.quit();
+}
+
+/** Opens the quick-note box (the global shortcut, or "Quick note…" in the tray). */
+function openQuickNote(): void {
+  focusWindow();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(EVENTS.quickNote);
+}
+
+const tray = new TrayIcon({
+  open: () => focusWindow(),
+  quickNote: () => openQuickNote(),
+  quit: () => {
+    quitting = true;
+    app.quit();
+  },
+});
+
+/** The quick-note shortcut currently claimed, and whether claiming it worked. */
+let quickNoteShortcut: { accelerator: string; registered: boolean } | null = null;
+
+function applyQuickNoteShortcut(accelerator: string): void {
+  if (quickNoteShortcut?.accelerator === accelerator) return;
+  if (quickNoteShortcut?.registered) globalShortcut.unregister(quickNoteShortcut.accelerator);
+  quickNoteShortcut = null;
+  if (!accelerator) return;
+  let registered = false;
+  try {
+    // False when another app already uses it (or the desktop doesn't allow global shortcuts, as on some Wayland ones).
+    registered = globalShortcut.register(accelerator, openQuickNote);
+  } catch (err) {
+    log.warn('Could not register the quick-note shortcut', err);
+  }
+  quickNoteShortcut = { accelerator, registered };
+}
+
+/** The tray, opening at sign-in and the quick-note shortcut, as the settings say. */
+function applyDesktop(settings: Settings, previous: Settings | null): void {
+  if (settings.keepInTray) tray.show();
+  else {
+    tray.hide();
+    // Without a tray icon, a hidden window would be out of reach: bring it back.
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) focusWindow();
+  }
+  // Written at every start while on, so a moved AppImage is still found.
+  if (!previous ? settings.openAtLogin : settings.openAtLogin !== previous.openAtLogin) applyOpenAtLogin(settings.openAtLogin);
+  applyQuickNoteShortcut(settings.quickNoteShortcut);
+}
+
+function desktopStatus(): DesktopStatus {
+  return { canOpenAtLogin: autostartExecutable() !== null, trayShown: tray.shown, shortcut: quickNoteShortcut };
 }
 
 /** Runs a program to its end (the .deb installation) and resolves with its exit code. */
@@ -219,6 +282,21 @@ function hardenSessions(): void {
 
 function applyTheme(theme: 'system' | 'light' | 'dark'): void {
   nativeTheme.themeSource = theme;
+}
+
+/**
+ * Draws everything larger or smaller (Settings → Appearance → Text size). The window's smallest size grows
+ * with it, so the page itself never gets narrower than at 100 %; it never grows beyond the screen.
+ */
+function applyTextSize(percent: number): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const factor = percent / 100;
+  mainWindow.webContents.setZoomFactor(factor);
+  const { workAreaSize } = screen.getDisplayMatching(mainWindow.getBounds());
+  mainWindow.setMinimumSize(
+    Math.min(Math.round(MIN_WINDOW_WIDTH * Math.max(1, factor)), workAreaSize.width),
+    Math.min(Math.round(MIN_WINDOW_HEIGHT * Math.max(1, factor)), workAreaSize.height),
+  );
 }
 
 /** Offers a safe way forward when the journal can't be opened. Never deletes anything. */
@@ -347,22 +425,40 @@ async function start(): Promise<void> {
   });
   const updateChecker = updates;
   const { result } = updateChecker.status();
+  // Automatic backups into the chosen folder, and the backup password (services/backups.ts).
+  const backups = new Backups(() => journalHost.journal, app.getVersion());
+  let autoBackupWasOn = journalHost.journal.settings.get().autoBackup;
+  const backupCheck = () => {
+    void backups.runIfDue().catch((err) => log.warn('Automatic backup check failed', err));
+  };
   if (result) log.info(`The update from ${result.previous} to ${result.version} ${result.outcome === 'installed' ? 'worked' : 'failed'}`);
 
+  let lastSettings: Settings | null = null;
   const platform = electronPlatform(
     () => mainWindow,
     (settings) => {
       applyTheme(settings.theme);
+      applyTextSize(settings.textSize);
       reminder?.update(settings);
       updateChecker.settingsChanged();
+      applyDesktop(settings, lastSettings);
+      lastSettings = settings;
+      // Turning automatic backups on makes the first one soon, not only at the next hourly check.
+      if (settings.autoBackup && !autoBackupWasOn) setTimeout(backupCheck, 15_000).unref();
+      autoBackupWasOn = settings.autoBackup;
     },
     updateChecker,
+    desktopStatus,
   );
-  registerIpc(createApi(journalHost, platform, appLock), isTrustedUrl);
+  registerIpc(createApi(journalHost, platform, appLock, backups), isTrustedUrl);
 
   const settings = journalHost.journal.settings.get();
   applyTheme(settings.theme);
   reminder.update(settings);
+  applyDesktop(settings, null);
+  lastSettings = settings;
+  // Opened at sign-in (--hidden): wait in the tray, or minimized when there is no tray icon.
+  const startedHidden = process.argv.includes(HIDDEN_ARG);
 
   mainWindow = createMainWindow({
     preload: join(__dirname, '../preload/index.js'),
@@ -377,24 +473,50 @@ async function start(): Promise<void> {
       }
     },
     isTrustedUrl,
+    hideOnClose: () => !quitting && tray.shown && journalHost.journal.settings.get().keepInTray,
+    // Out of sight in the tray counts as closed: with a PIN, it's asked again next time.
+    onHidden: () => {
+      if (appLock.status().enabled) appLock.lock();
+    },
+    startHidden: startedHidden ? (tray.shown ? 'tray' : 'minimized') : false,
   });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+  // Windows is shutting down or signing out: really close (after saving), don't hide in the tray.
+  mainWindow.on('session-end', () => {
+    quitting = true;
+  });
+  powerMonitor.on('shutdown', () => {
+    quitting = true;
+  });
+  // Also after a reload (restoring a backup reloads the page), so the setting always wins.
+  mainWindow.webContents.on('did-finish-load', () => applyTextSize(journalHost.journal.settings.get().textSize));
+  applyTextSize(settings.textSize);
 
   // Automatic checks only in the released app (and in tests that bring their own feed): every start asks once,
   // a few seconds in so start-up stays quick.
   if (app.isPackaged || testUpdateFeed) updateChecker.start(testUpdateFeed ? 300 : 3_000);
 
-  // The daily safety snapshot runs after the window is up so startup stays quick.
-  setTimeout(() => {
+  // The daily safety snapshot: a few seconds after start (so startup stays quick), then every hour while
+  // mJournal stays open and whenever the computer wakes up. A copy is only made when the last one is old enough.
+  const snapshotCheck = () => {
     try {
       const snapshot = maybeTakeDailySnapshot(journalHost.journal);
       if (snapshot) log.info('Saved the daily safety snapshot');
     } catch (err) {
       log.warn('Could not save the daily safety snapshot', err);
     }
-  }, 4000);
+  };
+  setTimeout(snapshotCheck, 4000);
+  setInterval(snapshotCheck, SNAPSHOT_CHECK_INTERVAL_MS).unref();
+  powerMonitor.on('resume', snapshotCheck);
+
+  // Automatic backups (when they are on): a minute after start, every hour, and after the computer wakes up.
+  // A backup that was due while mJournal was closed is made then.
+  setTimeout(backupCheck, 60_000).unref();
+  setInterval(backupCheck, AUTO_BACKUP_CHECK_INTERVAL_MS).unref();
+  powerMonitor.on('resume', () => setTimeout(backupCheck, 30_000).unref());
 
   // The Windows installer from the last update is done by now; its download can go.
   if (installer) setTimeout(() => void installer.cleanUp(), 60_000).unref();
@@ -408,6 +530,11 @@ app.on('quit', () => {
   } catch (err) {
     log.error('Could not start the update', err);
   }
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  tray.hide();
 });
 
 app.on('window-all-closed', () => {

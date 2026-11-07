@@ -2,12 +2,13 @@
  * Daily entries and prompt answers.
  *
  * There is at most one entry per calendar day. Any change to a day's content
- * also refreshes its derived columns (word count, counters, has_content) and
- * its search-index row inside the same transaction, so they never drift.
+ * also refreshes its derived columns (word count, counters, has_content), its
+ * #tags and its search-index row inside the same transaction, so they never drift.
  */
-import type { AnswerInput, AnswerRecord, DaySummary, EntryPatch, EntryRecord } from '@core/api';
+import type { AnswerInput, AnswerRecord, DaySummary, DayTag, EntryPatch, EntryRecord } from '@core/api';
 import { dayNumber, firstDayOfMonth, lastDayOfMonth, type DateKey, type MonthKey } from '@core/dates';
-import { countWords, makeExcerpt } from '@core/text';
+import { extractHashtags, MAX_TAGS_PER_DAY } from '@core/tags';
+import { countWords, makeExcerpt, MAX_TEXT_LENGTH } from '@core/text';
 import { UserFacingError } from '@core/validation';
 import type { Db } from './database';
 
@@ -23,6 +24,7 @@ export interface EntryRow {
   answer_count: number;
   photo_count: number;
   favorite_moments: number;
+  tag_count: number;
   has_content: number;
   created_at: string;
   updated_at: string;
@@ -39,15 +41,20 @@ interface AnswerRow {
   updated_at: string;
 }
 
-/** Entry columns plus the first answer, used to build excerpts. */
+/** The labels of a day's tags, joined by U+001F (for DaySummary.tags). */
+export const TAG_LABELS_SELECT = `(SELECT group_concat(t.label, char(31)) FROM entry_tags et
+      JOIN tags t ON t.name = et.tag WHERE et.entry_date = e.date) AS tag_labels`;
+
+/** Entry columns plus the first answer (for excerpts) and the tags. */
 const SUMMARY_SELECT = `
   SELECT e.*,
     (SELECT a.answer FROM answers a
       WHERE a.entry_date = e.date AND a.answer <> ''
-      ORDER BY a.position LIMIT 1) AS first_answer
+      ORDER BY a.position LIMIT 1) AS first_answer,
+    ${TAG_LABELS_SELECT}
   FROM entries e`;
 
-type SummaryRow = EntryRow & { first_answer: string | null };
+type SummaryRow = EntryRow & { first_answer: string | null; tag_labels?: string | null };
 
 export function toEntryRecord(row: EntryRow): EntryRecord {
   return {
@@ -88,6 +95,7 @@ export function toDaySummary(row: SummaryRow): DaySummary {
     photoCount: row.photo_count,
     wordCount: row.word_count,
     excerpt: makeExcerpt(source),
+    tags: row.tag_labels ? row.tag_labels.split('\u001f').sort((a, b) => a.localeCompare(b)) : [],
   };
 }
 
@@ -139,16 +147,101 @@ export class EntriesStore {
     });
   }
 
+  /** Adds a paragraph to the end of the day's free writing (a quick note), in one step. */
+  appendToBody(date: DateKey, text: string): EntryRecord {
+    return this.db.transaction(() => {
+      this.ensure(date);
+      const current = this.get(date)!.body;
+      const body = current.trim() ? `${current.trimEnd()}\n\n${text}` : text;
+      if (body.length > MAX_TEXT_LENGTH) throw new UserFacingError('too-long', 'Today’s writing is too long to add more to it.');
+      return this.update(date, { body });
+    });
+  }
+
+  /** The day's tags, picked or written, in the order of the tag list. */
+  tags(date: DateKey): DayTag[] {
+    return this.db
+      .all<{ name: string; label: string; picked: number; written: number }>(
+        `SELECT t.name, t.label, et.picked, et.written FROM entry_tags et JOIN tags t ON t.name = et.tag
+         WHERE et.entry_date = ? ORDER BY t.quick DESC, t.position, t.label`,
+        [date],
+      )
+      .map((row) => ({ name: row.name, label: row.label, picked: row.picked === 1, written: row.written === 1 }));
+  }
+
+  /** Picks or un-picks a tag that is already in the vocabulary. The tag stays while it is written as #tag. */
+  setTagPicked(date: DateKey, name: string, picked: boolean): void {
+    this.db.transaction(() => {
+      if (picked) {
+        this.ensure(date);
+        const count = this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM entry_tags WHERE entry_date = ?', [date])!.n;
+        const has = this.db.get('SELECT 1 AS x FROM entry_tags WHERE entry_date = ? AND tag = ?', [date, name]);
+        if (!has && count >= MAX_TAGS_PER_DAY) {
+          throw new UserFacingError('too-many-tags', `A day can have up to ${MAX_TAGS_PER_DAY} tags.`);
+        }
+        this.db.run(
+          `INSERT INTO entry_tags (entry_date, tag, picked) VALUES (?, ?, 1)
+           ON CONFLICT (entry_date, tag) DO UPDATE SET picked = 1`,
+          [date, name],
+        );
+      } else {
+        this.db.run('UPDATE entry_tags SET picked = 0 WHERE entry_date = ? AND tag = ?', [date, name]);
+      }
+      this.touch(date);
+      this.refresh(date);
+    });
+  }
+
   /**
-   * Deletes a day's writing, mood and answers. Its photos are not deleted:
-   * they move to "Recently removed", where they can be restored.
+   * Deletes a day's writing, mood, answers and tags. Its photos are not deleted:
+   * they move to "Recently removed", where they can be restored. (The API keeps
+   * the day itself in Recently removed too: see removedDays.ts.)
    */
   remove(date: DateKey): void {
     this.db.transaction(() => {
       this.db.run('UPDATE photos SET removed_at = ? WHERE entry_date = ? AND removed_at IS NULL', [this.now(), date]);
       this.db.run('DELETE FROM entries WHERE date = ?', [date]);
       this.db.run('DELETE FROM search_index WHERE rowid = ?', [dayNumber(date)]);
+      this.forgetUnusedTags();
     });
+  }
+
+  /** Tags that are neither quick chips nor on any day are removed (for example a #half-typed word). */
+  private forgetUnusedTags(): void {
+    this.db.run(
+      'DELETE FROM tags WHERE quick = 0 AND NOT EXISTS (SELECT 1 FROM entry_tags et WHERE et.tag = tags.name)',
+    );
+  }
+
+  /** Brings the day's #tags in line with its text; returns the labels of all its tags. */
+  private syncWrittenTags(date: DateKey, texts: string[]): string[] {
+    const written = new Map<string, string>();
+    for (const text of texts) {
+      for (const tag of extractHashtags(text)) if (!written.has(tag.key)) written.set(tag.key, tag.label);
+    }
+    const now = this.now();
+    this.db.run('UPDATE entry_tags SET written = 0 WHERE entry_date = ? AND written = 1', [date]);
+    let added = 0;
+    for (const [name, label] of written) {
+      if (added >= MAX_TAGS_PER_DAY) break;
+      this.db.run(
+        `INSERT INTO tags (name, label, quick, position, created_at, updated_at)
+         VALUES (?, ?, 0, (SELECT COALESCE(MAX(position), -1) + 1 FROM tags), ?, ?)
+         ON CONFLICT (name) DO NOTHING`,
+        [name, label, now, now],
+      );
+      this.db.run(
+        `INSERT INTO entry_tags (entry_date, tag, written) VALUES (?, ?, 1)
+         ON CONFLICT (entry_date, tag) DO UPDATE SET written = 1`,
+        [date, name],
+      );
+      added++;
+    }
+    this.db.run('DELETE FROM entry_tags WHERE entry_date = ? AND picked = 0 AND written = 0', [date]);
+    this.forgetUnusedTags();
+    return this.db
+      .all<{ label: string }>('SELECT t.label FROM entry_tags et JOIN tags t ON t.name = et.tag WHERE et.entry_date = ?', [date])
+      .map((r) => r.label);
   }
 
   answers(date: DateKey): AnswerRecord[] {
@@ -234,14 +327,16 @@ export class EntriesStore {
     const words =
       countWords(entry.body) + countWords(entry.mood_note) + answered.reduce((n, a) => n + countWords(a.answer), 0);
     const favoriteMoments = answered.filter((a) => a.favorite === 1).length + photos.filter((p) => p.favorite === 1).length;
+    const tagLabels = this.syncWrittenTags(date, [entry.body, entry.mood_note, ...answered.map((a) => a.answer), ...photos.map((p) => p.caption)]);
     this.db.run(
-      `UPDATE entries SET word_count = ?, has_text = ?, answer_count = ?, photo_count = ?, favorite_moments = ?
+      `UPDATE entries SET word_count = ?, has_text = ?, answer_count = ?, photo_count = ?, favorite_moments = ?, tag_count = ?
        WHERE date = ?`,
-      [words, hasText ? 1 : 0, answered.length, photos.length, favoriteMoments, date],
+      [words, hasText ? 1 : 0, answered.length, photos.length, favoriteMoments, tagLabels.length, date],
     );
 
     this.db.run('DELETE FROM search_index WHERE rowid = ?', [rowid]);
-    const notes = [entry.mood_note, ...photos.map((p) => p.caption)].filter((t) => t.trim() !== '').join('\n');
+    // Tags are searchable too, so a day tagged "Walk" is found by "walk" even without the word in its text.
+    const notes = [entry.mood_note, ...photos.map((p) => p.caption), ...tagLabels].filter((t) => t.trim() !== '').join('\n');
     if (hasText || notes) {
       this.db.run('INSERT INTO search_index (rowid, body, answers, notes) VALUES (?, ?, ?, ?)', [
         rowid,

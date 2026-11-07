@@ -1,6 +1,6 @@
 /** Journal history and search: every saved day, newest first, with filters. Search runs locally. */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SearchQuery, SearchResult } from '@core/api';
+import type { SearchQuery, SearchResult, WritingResult } from '@core/api';
 import {
   addMonths,
   firstDayOfMonth,
@@ -30,6 +30,7 @@ type When = '' | 'month' | 'quarter' | 'year' | 'custom' | `m:${string}` | `y:${
 interface Filters {
   q: string;
   moods: string[];
+  tags: string[];
   when: When;
   from: string;
   to: string;
@@ -42,6 +43,7 @@ function readFilters(params: URLSearchParams): Filters {
   return {
     q: params.get('q') ?? '',
     moods: (params.get('moods') ?? '').split(',').filter(Boolean),
+    tags: (params.get('tags') ?? '').split(',').filter(Boolean),
     when: (params.get('when') ?? '') as When,
     from: params.get('from') ?? '',
     to: params.get('to') ?? '',
@@ -55,6 +57,7 @@ function writeFilters(filters: Filters): string {
   return href.journal({
     q: filters.q.trim() || undefined,
     moods: filters.moods.join(','),
+    tags: filters.tags.join(','),
     when: filters.when,
     from: filters.when === 'custom' ? filters.from : '',
     to: filters.when === 'custom' ? filters.to : '',
@@ -89,6 +92,9 @@ export function JournalView({ params }: { params: URLSearchParams }) {
   const filters = readFilters(params);
   const [text, setText] = useState(filters.q);
   const [moodMenu, setMoodMenu] = useState(false);
+  const [tagMenu, setTagMenu] = useState(false);
+  const tagList = useQuery('tags', () => api.tags.list(), ['tags', 'entries']);
+  const usedTags = (tagList.data ?? []).filter((t) => t.days > 0 || filters.tags.includes(t.name));
   const [extra, setExtra] = useState<SearchResult[]>([]);
   const [cursor, setCursor] = useState<DateKey | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -116,6 +122,7 @@ export function JournalView({ params }: { params: URLSearchParams }) {
     from: range.from,
     to: range.to,
     moods: filters.moods.length ? filters.moods : undefined,
+    tags: filters.tags.length ? filters.tags : undefined,
     withPhotos: filters.photos || undefined,
     favoritesOnly: filters.fav || undefined,
     order: filters.order,
@@ -123,6 +130,22 @@ export function JournalView({ params }: { params: URLSearchParams }) {
   };
   const queryKey = JSON.stringify(query);
   const page = useQuery(`search:${queryKey}`, () => api.journal.search(query), ['entries']);
+  // Reflections and opened letters are searched too, when the search is only words (the other filters are about days).
+  const textOnly = Boolean(filters.q) && !filters.moods.length && !filters.tags.length && !filters.photos && !filters.fav;
+  const writing = useQuery(
+    `writing:${textOnly ? filters.q : ''}:${range.from ?? ''}:${range.to ?? ''}`,
+    () => (textOnly ? api.journal.searchWriting({ text: filters.q, from: range.from, to: range.to }) : Promise.resolve([])),
+    ['reflections', 'capsules'],
+  );
+  const writingResults = textOnly ? (writing.data ?? []) : [];
+  const writingTitle = (w: WritingResult) =>
+    w.kind === 'month'
+      ? `Monthly reflection · ${format.monthYear(w.ref)}`
+      : w.kind === 'year'
+        ? `Year in review · ${w.ref}`
+        : `Letter written on ${format.long(w.writtenOn ?? '')} · opened ${format.medium(w.openOn ?? '')}`;
+  const writingLink = (w: WritingResult) =>
+    w.kind === 'month' ? href.month(w.ref, filters.q) : w.kind === 'year' ? href.year(Number(w.ref), filters.q) : href.day(w.openOn ?? '', filters.q);
   const months = useQuery('journal-months', () => api.journal.months(), ['entries']);
   const years = useMemo(() => {
     const counts = new Map<string, number>();
@@ -163,7 +186,7 @@ export function JournalView({ params }: { params: URLSearchParams }) {
     return [...map.entries()];
   }, [results]);
 
-  const active = Boolean(filters.q || filters.moods.length || filters.when || filters.photos || filters.fav);
+  const active = Boolean(filters.q || filters.moods.length || filters.tags.length || filters.when || filters.photos || filters.fav);
   const total = page.data?.total ?? 0;
 
   return (
@@ -246,6 +269,41 @@ export function JournalView({ params }: { params: URLSearchParams }) {
               </div>
             )}
           </div>
+
+          {usedTags.length > 0 && (
+            <div className="filter-menu">
+              <button
+                type="button"
+                className="chip"
+                aria-pressed={filters.tags.length > 0}
+                aria-expanded={tagMenu}
+                onClick={() => setTagMenu(!tagMenu)}
+              >
+                <Icon name="tag" size={13} /> Tags{filters.tags.length ? ` · ${filters.tags.length}` : ''} <Icon name="chevron-down" size={13} />
+              </button>
+              {tagMenu && (
+                <div className="popover mood-menu tag-menu" role="group" aria-label="Filter by tag" onKeyDown={(e) => e.key === 'Escape' && setTagMenu(false)}>
+                  {usedTags.map((tag) => (
+                    <label key={tag.name} className="check mood-menu-item">
+                      <input
+                        type="checkbox"
+                        checked={filters.tags.includes(tag.name)}
+                        onChange={(event) =>
+                          update({
+                            tags: event.target.checked ? [...filters.tags, tag.name] : filters.tags.filter((t) => t !== tag.name),
+                          })
+                        }
+                      />
+                      {tag.label} <span className="muted">({tag.days})</span>
+                    </label>
+                  ))}
+                  <button type="button" className="btn btn-sm" onClick={() => setTagMenu(false)}>
+                    Done
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           <label className="visually-hidden" htmlFor="when-filter">
             When
@@ -335,7 +393,7 @@ export function JournalView({ params }: { params: URLSearchParams }) {
           <Icon name="info" size={16} />
           <span>{errorMessage(page.error)}</span>
         </p>
-      ) : page.data && results.length === 0 ? (
+      ) : page.data && results.length === 0 && writingResults.length === 0 ? (
         <div className="empty">
           <div className="art">
             <JournalArt />
@@ -356,7 +414,36 @@ export function JournalView({ params }: { params: URLSearchParams }) {
           )}
         </div>
       ) : (
-        groups.map(([month, items]) => (
+        <>
+          {writingResults.length > 0 && (
+            <section className="result-group writing-results" aria-labelledby="writing-results">
+              <h2 id="writing-results" className="group-title">
+                In your reflections and letters
+                <span className="count">{writingResults.length}</span>
+              </h2>
+              <ul className="result-list">
+                {writingResults.map((w) => (
+                  <li key={`${w.kind}-${w.ref}`}>
+                    <a className="result" href={writingLink(w)}>
+                      <span className="result-date writing-kind" aria-hidden="true">
+                        <Icon name={w.kind === 'capsule' ? 'envelope' : w.kind === 'year' ? 'star' : 'month'} size={20} />
+                      </span>
+                      <span className="result-body">
+                        <span className="result-meta">
+                          <span>{writingTitle(w)}</span>
+                        </span>
+                        <span className="result-excerpt">
+                          {splitHighlights(w.snippet).map((part, i) => (part.match ? <mark key={i}>{part.text}</mark> : <span key={i}>{part.text}</span>))}
+                        </span>
+                      </span>
+                      <Icon name="chevron-right" size={18} className="result-arrow" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {groups.map(([month, items]) => (
           <section key={month} className="result-group" aria-labelledby={`group-${month}`}>
             <h2 id={`group-${month}`} className="group-title">
               {format.monthYear(month)}
@@ -367,7 +454,7 @@ export function JournalView({ params }: { params: URLSearchParams }) {
                 const mood = moodFor(r.mood);
                 return (
                   <li key={r.date}>
-                    <a className="result" href={href.day(r.date)}>
+                    <a className="result" href={href.day(r.date, filters.q || null)}>
                       <span className="result-date" aria-hidden="true">
                         <span className="result-day">{parseDateKey(r.date).day}</span>
                         <span className="result-weekday">{weekdayName(r.date, 'short')}</span>
@@ -392,6 +479,12 @@ export function JournalView({ params }: { params: URLSearchParams }) {
                               <Icon name="heart" size={13} filled /> Favorite
                             </span>
                           )}
+                          {r.tags.slice(0, 3).map((tag) => (
+                            <span key={tag} className="result-tag">
+                              {tag}
+                            </span>
+                          ))}
+                          {r.tags.length > 3 && <span className="muted">+{r.tags.length - 3}</span>}
                         </span>
                         <span className="result-excerpt">
                           {r.snippet
@@ -406,7 +499,8 @@ export function JournalView({ params }: { params: URLSearchParams }) {
               })}
             </ul>
           </section>
-        ))
+        ))}
+        </>
       )}
 
       {hasMore && (

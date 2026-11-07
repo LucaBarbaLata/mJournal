@@ -1,4 +1,7 @@
-/** The main window: security settings, title bar, context menu, size memory and safe closing. */
+/**
+ * The main window: security settings, title bar, context menu, size memory and safe closing. With "Keep mJournal
+ * in the tray", closing saves first and then only hides the window (see `hideOnClose`).
+ */
 import { BrowserWindow, Menu, ipcMain, nativeTheme, screen, type MenuItemConstructorOptions } from 'electron';
 import { EVENTS } from '@core/api';
 import { CHROME_COLORS } from '@core/theme';
@@ -13,13 +16,16 @@ export interface WindowState {
 }
 
 const DEFAULT_STATE: WindowState = { width: 1280, height: 840, maximized: false };
+/** The smallest window at 100 % text size; larger text sizes raise it (see applyTextSize in index.ts). */
+export const MIN_WINDOW_WIDTH = 640;
+export const MIN_WINDOW_HEIGHT = 520;
 const TITLE_BAR_HEIGHT = 40;
 const FLUSH_TIMEOUT_MS = 3000;
 
 /** Keeps a remembered position only if it is still visible on a connected screen. */
 function usableState(saved: WindowState | undefined): WindowState {
   if (!saved || !Number.isFinite(saved.width) || !Number.isFinite(saved.height)) return DEFAULT_STATE;
-  const state = { ...saved, width: Math.max(640, saved.width), height: Math.max(520, saved.height) };
+  const state = { ...saved, width: Math.max(MIN_WINDOW_WIDTH, saved.width), height: Math.max(MIN_WINDOW_HEIGHT, saved.height) };
   if (state.x === undefined || state.y === undefined) return state;
   const visible = screen.getAllDisplays().some(({ workArea: a }) => {
     return state.x! < a.x + a.width - 80 && state.x! + state.width > a.x + 80 && state.y! >= a.y - 10 && state.y! < a.y + a.height - 80;
@@ -38,6 +44,12 @@ export function createMainWindow(options: {
   savedState?: WindowState;
   saveState: (state: WindowState) => void;
   isTrustedUrl: (url: string) => boolean;
+  /** Whether closing should only hide the window (kept in the tray, and mJournal isn't quitting). */
+  hideOnClose?: () => boolean;
+  /** Called after the window was hidden instead of closed (its edits are saved by then). */
+  onHidden?: () => void;
+  /** Opened at sign-in: start hidden (in the tray) or minimized instead of in front. */
+  startHidden?: 'tray' | 'minimized' | false;
 }): BrowserWindow {
   const state = usableState(options.savedState);
   const colors = chromeColors();
@@ -46,8 +58,8 @@ export function createMainWindow(options: {
     y: state.y,
     width: state.width,
     height: state.height,
-    minWidth: 640,
-    minHeight: 520,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     show: false,
     title: 'mJournal',
     icon: options.icon,
@@ -68,7 +80,15 @@ export function createMainWindow(options: {
   });
 
   if (state.maximized) win.maximize();
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    if (options.startHidden === 'tray') return;
+    if (options.startHidden === 'minimized') {
+      win.showInactive();
+      win.minimize();
+      return;
+    }
+    win.show();
+  });
 
   // Nothing may open new windows or navigate away from the app.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -106,17 +126,27 @@ export function createMainWindow(options: {
     if (items.length > 0) Menu.buildFromTemplate(items).popup({ window: win });
   });
 
-  // Ask the interface to save pending edits before closing; never wait forever.
+  // Ask the interface to save pending edits before closing (or hiding); never wait forever.
   let closing = false;
   let flushed = false;
+  let timeout: NodeJS.Timeout | null = null;
   const onFlushed = (event: Electron.IpcMainEvent) => {
     if (event.sender !== win.webContents) return;
     finishClose();
   };
   const finishClose = () => {
-    if (flushed) return;
-    flushed = true;
+    if (flushed || !closing) return;
     ipcMain.removeListener(EVENTS.flushDone, onFlushed);
+    if (timeout) clearTimeout(timeout);
+    timeout = null;
+    if (options.hideOnClose?.()) {
+      // Kept in the tray: everything is saved, the window just goes out of sight.
+      closing = false;
+      win.hide();
+      options.onHidden?.();
+      return;
+    }
+    flushed = true;
     win.close();
   };
   win.on('close', (event) => {
@@ -129,7 +159,7 @@ export function createMainWindow(options: {
     closing = true;
     ipcMain.on(EVENTS.flushDone, onFlushed);
     win.webContents.send(EVENTS.flushRequest);
-    setTimeout(() => {
+    timeout = setTimeout(() => {
       if (!flushed) log.warn('The interface did not confirm saving before closing; closing anyway.');
       finishClose();
     }, FLUSH_TIMEOUT_MS);

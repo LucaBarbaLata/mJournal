@@ -1,11 +1,16 @@
-/** Where data lives, what mJournal does (and doesn't do) with it, and recently removed photos. */
+/** Where data lives, what mJournal does (and doesn't do) with it, and recently removed days and photos. */
 import { useEffect } from 'react';
+import type { RemovedDay } from '@core/api';
+import { todayKey } from '@core/dates';
 import { confirm } from '../../components/Dialog';
 import { Icon } from '../../components/Icon';
+import { MoodIcon } from '../../components/MoodIcon';
 import { PhotoImage, photoAlt } from '../../components/Photo';
 import { api, errorMessage } from '../../lib/api';
 import { useApp } from '../../lib/app';
 import { invalidate, useQuery } from '../../lib/data';
+import { refreshDay } from '../../lib/dayRefresh';
+import { href, navigate } from '../../lib/router';
 import { ensureThumbnails } from '../../lib/thumbnails';
 import { toast } from '../../components/Toasts';
 import { SettingsSection } from '../SettingsView';
@@ -67,8 +72,8 @@ export function DataSettings() {
             <p className="muted">
               Your journal is stored as ordinary files in your user folder. Anyone who can sign in to your computer account could
               open them. To protect it, use a password on your account and turn on device encryption ({diskEncryptionHint(app.platform)}).
-              A PIN (Settings → PIN lock) keeps mJournal itself closed, but doesn’t encrypt the files. Backups aren’t
-              encrypted either — keep them somewhere private.
+              A PIN (Settings → PIN lock) keeps mJournal itself closed, but doesn’t encrypt the files. Backups are only
+              encrypted when you set a password for them (Backup &amp; export) — otherwise keep them somewhere private.
             </p>
           </div>
         </li>
@@ -77,8 +82,8 @@ export function DataSettings() {
           <div>
             <h3>Gentle on your computer</h3>
             <p className="muted">
-              Nothing runs in the background when mJournal is closed. Its small troubleshooting log never contains your
-              journal’s content.
+              Nothing runs in the background when mJournal is closed — unless you choose to keep it in the tray. Its small
+              troubleshooting log never contains your journal’s content.
             </p>
           </div>
         </li>
@@ -104,11 +109,41 @@ export function DataSettings() {
   );
 }
 
-export function RemovedPhotos() {
-  const { format } = useApp();
+/** Days and photos that were removed, waiting until they are restored or deleted for good. */
+export function RemovedItems() {
+  const { format, mood: moodFor } = useApp();
   const removed = useQuery('removed-photos', () => api.photos.listRemoved(), ['photos']);
+  const removedDays = useQuery('removed-days', () => api.entries.listRemoved(), ['entries', 'photos']);
   const photos = removed.data ?? [];
+  const days = removedDays.data ?? [];
   useEffect(() => ensureThumbnails(photos), [photos]);
+
+  const restoreDay = async (day: RemovedDay) => {
+    try {
+      const date = await api.entries.restoreRemoved(day.id);
+      invalidate('entries', 'photos', 'tags');
+      refreshDay(date);
+      toast(`${format.long(date)} is back`, { label: 'Open day', onClick: () => navigate(href.day(date)) });
+    } catch (err) {
+      toast(errorMessage(err));
+    }
+  };
+
+  const deleteDay = async (day: RemovedDay) => {
+    const ok = await confirm({
+      title: 'Delete this day for good?',
+      body: `What you wrote on ${format.long(day.date)} is deleted permanently. Its photos stay below until you delete them too. Complete backups made earlier still contain the day.`,
+      confirmLabel: 'Delete permanently',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    try {
+      await api.entries.deleteRemoved(day.id);
+      invalidate('entries');
+    } catch (err) {
+      toast(errorMessage(err));
+    }
+  };
 
   const restore = async (id: string) => {
     try {
@@ -139,9 +174,43 @@ export function RemovedPhotos() {
   return (
     <SettingsSection
       id="removed"
-      title="Recently removed photos"
-      description="Photos you remove from a day wait here, with their files untouched, until you restore or delete them."
+      title="Recently removed"
+      description="Days you delete and photos you remove wait here, untouched, until you restore them or delete them for good."
     >
+      <h3 className="sub-heading">Days</h3>
+      {days.length === 0 ? (
+        <p className="muted">Nothing here.</p>
+      ) : (
+        <ul className="removed-days">
+          {days.map((day) => {
+            const mood = moodFor(day.mood);
+            return (
+              <li key={day.id}>
+                <span className="removed-day-text">
+                  <strong>{format.long(day.date)}</strong>
+                  <span className="muted">
+                    {mood && <MoodIcon icon={mood.icon} color={mood.color} size={16} title={mood.label} />}{' '}
+                    {day.excerpt ||
+                      [day.answerCount && `${day.answerCount} answers`, day.photoCount && `${day.photoCount} photos`].filter(Boolean).join(' · ') ||
+                      'A saved day'}
+                  </span>
+                  <span className="muted removed-when">Deleted {format.medium(todayKey(new Date(day.removedAt)))}</span>
+                </span>
+                <span className="removed-actions">
+                  <button type="button" className="btn btn-sm" onClick={() => void restoreDay(day)}>
+                    <Icon name="restore" size={14} /> Restore
+                  </button>
+                  <button type="button" className="icon-btn" aria-label="Delete permanently" title="Delete permanently" onClick={() => void deleteDay(day)}>
+                    <Icon name="trash" size={16} />
+                  </button>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <h3 className="sub-heading">Photos</h3>
       {photos.length === 0 ? (
         <p className="muted">Nothing here.</p>
       ) : (

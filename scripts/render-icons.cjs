@@ -5,7 +5,9 @@
  *
  *   npm run icons
  *
- * Writes build/icon.png, build/icon.ico and resources/icon.png.
+ * Writes build/icon.png, build/icon.ico and resources/icon.png, plus the tray
+ * icons resources/tray-16.png and resources/tray-32.png. `npm run icons -- --tray-only`
+ * writes only the tray icons.
  */
 const { app, BrowserWindow } = require('electron');
 const fs = require('node:fs');
@@ -71,9 +73,22 @@ function buildIco(images) {
   return Buffer.concat([header, ...entries, ...images.map((i) => i.png)]);
 }
 
+const trayOnly = process.argv.includes('--tray-only');
+
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
   await win.loadURL('data:text/html,<!doctype html><title>icons</title>');
+
+  // The tray (notification area) icon: the small drawing at 16 px, and at 32 px for high-density screens.
+  fs.mkdirSync(path.join(root, 'resources'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'resources', 'tray-16.png'), await render(win, smallSvg, 16));
+  fs.writeFileSync(path.join(root, 'resources', 'tray-32.png'), await render(win, smallSvg, 32));
+  console.log('Wrote the tray icons.');
+  if (trayOnly) {
+    app.quit();
+    return;
+  }
+
   const images = [];
   for (const size of ICO_SIZES) images.push({ size, png: await render(win, size <= 24 ? smallSvg : fullSvg, size) });
   const large = await render(win, fullSvg, 512);

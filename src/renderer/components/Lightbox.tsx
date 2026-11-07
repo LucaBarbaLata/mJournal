@@ -1,11 +1,13 @@
 /** A larger view of a photo with its caption, the day it belongs to and gentle actions. */
 import { useEffect, useRef, useState } from 'react';
 import type { GalleryPhoto, PhotoRecord } from '@core/api';
+import type { DateKey } from '@core/dates';
 import { api, errorMessage } from '../lib/api';
 import { useApp } from '../lib/app';
 import { invalidate } from '../lib/data';
 import { href, navigate } from '../lib/router';
 import { saveQueue } from '../lib/saveQueue';
+import { useToday } from '../lib/time';
 import { confirm } from './Dialog';
 import { Icon } from './Icon';
 import { MoodIcon } from './MoodIcon';
@@ -19,16 +21,21 @@ interface LightboxProps {
   onClose: () => void;
   /** Called after a caption, favorite or removal so the parent can refresh. */
   onChanged: () => void;
+  /** Shown for photos from many days (Memories, Monthly): a link to the photo's day. */
   showOpenDay?: boolean;
+  /** On a day's page: moves the photo one place earlier or later among the day's photos. */
+  onShift?: (photoId: string, delta: -1 | 1) => void;
 }
 
-export function Lightbox({ photos, index, onIndexChange, onClose, onChanged, showOpenDay = false }: LightboxProps) {
+export function Lightbox({ photos, index, onIndexChange, onClose, onChanged, showOpenDay = false, onShift }: LightboxProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const { format, mood: moodFor } = useApp();
+  const today = useToday();
   const photo = photos[index];
   const [caption, setCaption] = useState(photo?.caption ?? '');
   const [favorite, setFavorite] = useState(photo?.favorite ?? false);
   const [error, setError] = useState<string | null>(null);
+  const [moveTo, setMoveTo] = useState<DateKey | null>(null);
 
   useEffect(() => {
     ref.current?.showModal();
@@ -38,6 +45,7 @@ export function Lightbox({ photos, index, onIndexChange, onClose, onChanged, sho
     setCaption(photo?.caption ?? '');
     setFavorite(photo?.favorite ?? false);
     setError(null);
+    setMoveTo(null);
   }, [photo?.id]);
 
   if (!photo) return null;
@@ -95,8 +103,29 @@ export function Lightbox({ photos, index, onIndexChange, onClose, onChanged, sho
         }),
       });
       onChanged();
-      if (photos.length <= 1) onClose();
-      else if (index >= photos.length - 1) onIndexChange(index - 1);
+      leaveList();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
+  /** The photo leaves this list (a day's photos): show a neighbour, or close when it was the last one. */
+  const leaveList = () => {
+    if (photos.length <= 1) onClose();
+    else if (index >= photos.length - 1) onIndexChange(index - 1);
+  };
+
+  const moveToDay = async () => {
+    if (!moveTo) return;
+    try {
+      await saveQueue.flush();
+      const target = moveTo;
+      await api.photos.moveToDay(photo.id, target);
+      invalidate('entries', 'photos');
+      setMoveTo(null);
+      toast(`Photo moved to ${format.long(target)}`, { label: 'Open day', onClick: () => navigate(href.day(target)) });
+      onChanged();
+      if (!showOpenDay) leaveList();
     } catch (err) {
       setError(errorMessage(err));
     }
@@ -184,11 +213,57 @@ export function Lightbox({ photos, index, onIndexChange, onClose, onChanged, sho
           </p>
         )}
 
+        {moveTo !== null && (
+          <form
+            className="lightbox-move"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void moveToDay();
+            }}
+          >
+            <label className="field">
+              <span className="field-label">Move this photo to</span>
+              <input
+                type="date"
+                className="input"
+                value={moveTo}
+                max={today}
+                required
+                autoFocus
+                onChange={(event) => setMoveTo(event.target.value)}
+              />
+            </label>
+            <div className="row-actions">
+              <button type="submit" className="btn btn-primary btn-sm" disabled={!moveTo || moveTo === photo.date || moveTo > today}>
+                Move
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMoveTo(null)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
         <div className="lightbox-actions">
           <button type="button" className="btn" aria-pressed={favorite} onClick={toggleFavorite}>
             <Icon name="heart" size={16} filled={favorite} />
             {favorite ? 'Favorite' : 'Mark as favorite'}
           </button>
+          {onShift && photos.length > 1 && (
+            <>
+              <button type="button" className="btn btn-ghost" disabled={index === 0} onClick={() => onShift(photo.id, -1)}>
+                <Icon name="chevron-left" size={16} /> Move earlier
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={index === photos.length - 1}
+                onClick={() => onShift(photo.id, 1)}
+              >
+                Move later <Icon name="chevron-right" size={16} />
+              </button>
+            </>
+          )}
           {showOpenDay && (
             <button
               type="button"
@@ -199,6 +274,11 @@ export function Lightbox({ photos, index, onIndexChange, onClose, onChanged, sho
               }}
             >
               <Icon name="journal" size={16} /> Open this day
+            </button>
+          )}
+          {moveTo === null && (
+            <button type="button" className="btn btn-ghost" onClick={() => setMoveTo(photo.date)}>
+              <Icon name="move" size={16} /> Move to another day…
             </button>
           )}
           <button type="button" className="btn btn-ghost" onClick={() => void api.photos.showInFolder(photo.id)}>

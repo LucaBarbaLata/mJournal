@@ -30,6 +30,8 @@ function setup(overrides: Partial<Platform> = {}) {
     notificationsSupported: false,
     chooseImages: async () => [],
     chooseBackupFile: async () => null,
+    chooseFolder: async () => null,
+    desktopStatus: () => ({ canOpenAtLogin: false, trayShown: false, shortcut: null }),
     chooseSaveLocation: async () => null,
     showItemInFolder: (p) => revealed.push(p),
     openFolder: async () => undefined,
@@ -66,6 +68,49 @@ describe('API handlers', () => {
     await expect(api.stats.overview('2026-10-24', 'decade')).rejects.toThrow(/range/);
     await expect(api.months.saveReflection('2026-10', 'not-a-question', 'x')).rejects.toThrow();
     await expect(api.data.restoreBackup('not-a-token')).rejects.toThrow(/restore request/);
+    await expect(api.settings.update({ textSize: 175 })).rejects.toThrow();
+    await expect(api.photos.gallery({ limit: 0 })).rejects.toThrow(/limit/);
+    await expect(api.photos.gallery({ limit: 1.5 })).rejects.toThrow(/limit/);
+    await expect(api.photos.moveToDay('../x', '2026-10-20')).rejects.toThrow(/photo/);
+    await expect(api.stats.streak('today')).rejects.toThrow(/date/);
+    await expect(api.tags.create('a/b')).rejects.toThrow(/letters, numbers/);
+    await expect(api.tags.create('')).rejects.toThrow(/tag/);
+    await expect(api.entries.setTag('2026-10-30', 'Walk', true)).rejects.toThrow(/hasn't happened yet/);
+    await expect(api.entries.setTag('2026-10-24', 'Walk', 'yes')).rejects.toThrow();
+    await expect(api.entries.restoreRemoved(0)).rejects.toThrow(/removed day/);
+    await expect(api.prompts.setPinned('joy-01', 128)).rejects.toThrow(/weekdays/);
+    await expect(api.capsules.create('next year')).rejects.toThrow(/day/);
+    await expect(api.capsules.save(1.5, 'x')).rejects.toThrow(/letter/);
+    await expect(api.months.saveReflection('2026-10', 'intention', 'x'.repeat(301))).rejects.toThrow(/too long/);
+    await expect(api.journal.search({ tags: [42] })).rejects.toThrow(/tag/);
+    await expect(api.settings.update({ quickNoteShortcut: 'Alt+F4' })).rejects.toThrow();
+    await expect(api.settings.update({ keepInTray: 'yes' })).rejects.toThrow();
+    await expect(api.entries.appendToBody('2026-10-30', 'from the future')).rejects.toThrow(/hasn't happened yet/);
+    await expect(api.entries.appendToBody('2026-10-24', '   ')).rejects.toThrow(/Please enter a note/);
+    await expect(api.years.recap(99)).rejects.toThrow(/year/);
+    await expect(api.years.saveReflection(2026, 'nope', 'x')).rejects.toThrow(/question/);
+  });
+
+  it('turns on the tray, opening at sign-in and the quick-note shortcut', async () => {
+    const { api, changed } = setup();
+    const next = await api.settings.update({ keepInTray: true, openAtLogin: true, quickNoteShortcut: 'CommandOrControl+Alt+J' });
+    expect(next).toMatchObject({ keepInTray: true, openAtLogin: true, quickNoteShortcut: 'CommandOrControl+Alt+J' });
+    expect(changed.at(-1)?.quickNoteShortcut).toBe('CommandOrControl+Alt+J');
+    expect(await api.app.desktopStatus()).toEqual({ canOpenAtLogin: false, trayShown: false, shortcut: null });
+  });
+
+  it('keeps a deleted day in Recently removed and can bring it back', async () => {
+    const { api } = setup();
+    await api.entries.update('2026-10-24', { body: 'Worth keeping', mood: 'calm' });
+    await api.entries.setTag('2026-10-24', 'Walk', true);
+    const { removedId } = await api.entries.remove('2026-10-24');
+    expect(removedId).not.toBeNull();
+    expect((await api.entries.getDay('2026-10-24')).entry).toBeNull();
+    expect(await api.entries.restoreRemoved(removedId!)).toBe('2026-10-24');
+    const day = await api.entries.getDay('2026-10-24');
+    expect(day.entry?.body).toBe('Worth keeping');
+    expect(day.tags.map((t) => t.label)).toEqual(['Walk']);
+    expect(await api.entries.remove('2026-10-01')).toEqual({ removedId: null });
   });
 
   it('rejects writing to days that haven’t happened yet', async () => {
@@ -94,6 +139,36 @@ describe('API handlers', () => {
     const result = await api.photos.pickAndImport('2026-10-24');
     expect(result.imported).toHaveLength(1);
     expect(result.imported[0].originalName).toBe('pick.png');
+  });
+
+  it('adds a large selection in batches, up to what a day can hold', async () => {
+    const dir = tempDir();
+    const sources = Array.from({ length: 65 }, (_, i) => {
+      const file = join(dir, `pick-${i}.png`);
+      writeFileSync(file, PNG_1PX);
+      return file;
+    });
+    const { api } = setup({ chooseImages: async () => sources });
+    const result = await api.photos.pickAndImport('2026-10-24');
+    expect(result.imported).toHaveLength(60);
+    expect(result.rejected).toHaveLength(5);
+    expect(result.rejected[0].reason).toMatch(/up to 60 photos/);
+  });
+
+  it('moves photos only to days that can be written to', async () => {
+    const { api } = setup();
+    const { imported } = await api.photos.importData('2026-10-24', [{ name: 'a.png', data: PNG_1PX }]);
+    await expect(api.photos.moveToDay(imported[0].id, '2026-10-30')).rejects.toThrow(/hasn't happened yet/);
+    expect((await api.photos.moveToDay(imported[0].id, '2026-10-01')).date).toBe('2026-10-01');
+  });
+
+  it('gives Today the streak without the whole overview', async () => {
+    const { api } = setup();
+    await api.entries.update('2026-10-23', { mood: 'calm' });
+    await api.entries.update('2026-10-24', { mood: 'happy' });
+    const streak = await api.stats.streak('2026-10-24');
+    expect(streak).toEqual((await api.stats.overview('2026-10-24', 'month')).streak);
+    expect(streak.current).toBe(2);
   });
 
   it('exports JSON and CSV to the chosen location and reveals only those files', async () => {
@@ -126,6 +201,9 @@ describe('API handlers', () => {
     const next = await api.settings.update({ theme: 'dark' });
     expect(next.theme).toBe('dark');
     expect(changed.at(-1)?.theme).toBe('dark');
+    expect(next.textSize).toBe(100);
+    expect((await api.settings.update({ textSize: 125 })).textSize).toBe(125);
+    expect(changed.at(-1)?.textSize).toBe(125);
   });
 
   it('describes the data folder honestly', async () => {

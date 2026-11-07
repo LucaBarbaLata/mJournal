@@ -218,3 +218,18 @@
   gap: 8px;
   margin-top: 24px;
 }
+
+/* ---------- Tags ---------- */
+.result-meta > .result-tag {
+  padding: 1px 8px;
+  border-radius: var(--r-full);
+  background: var(--sage-50);
+  color: var(--sage-700);
+}
+
+/* ---------- Reflections and letters that match a search ---------- */
+.writing-kind {
+  display: grid;
+  place-items: center;
+  color: var(--lavender-700);
+}

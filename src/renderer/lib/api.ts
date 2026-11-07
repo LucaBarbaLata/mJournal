@@ -38,6 +38,7 @@ export const native: NativeBridge = window.mjournalNative ?? {
   onUpdateStatus: noop,
   onLockRequest: noop,
   onLockChanged: noop,
+  onQuickNote: noop,
 };
 
 export function errorMessage(err: unknown): string {

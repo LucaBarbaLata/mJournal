@@ -51,8 +51,8 @@ flowchart LR
   selection, mood definitions, text helpers, input validation and the **API contract** (`core/api.ts`).
 - `src/main/journal.ts`, `host.ts`, `store/*` and `services/*` don’t import Electron. Tests open real journals in
   temporary folders, including the complete backup → restore flow.
-- Electron-specific code is limited to `main/index.ts`, `window.ts`, `protocols.ts`, `platform.ts`, `ipc.ts` and
-  `reminders.ts`.
+- Electron-specific code is limited to `main/index.ts`, `window.ts`, `protocols.ts`, `platform.ts`, `ipc.ts`,
+  `reminders.ts`, `tray.ts` and `autostart.ts`.
 
 ### The API contract
 
@@ -62,20 +62,27 @@ those channels; `main/api.ts` implements them, treating every argument as `unkno
 `core/validation.ts`. Errors that are safe to show are `UserFacingError`s; anything else is logged (the error only,
 never the arguments) and reported as a generic message.
 
-## Data model (schema version 1)
+## Data model (schema version 2)
 
 All tables are SQLite `STRICT` tables. The schema version is `PRAGMA user_version`.
 
 | Table | Purpose |
 | --- | --- |
-| `entries` | One row per calendar day (`date` = `YYYY-MM-DD`): free writing, mood key, mood note, energy 1–5, favorite. Derived columns (`word_count`, `has_text`, `answer_count`, `photo_count`, `favorite_moments`) are refreshed in the same transaction as every change; `has_content` is a generated column and is the single definition of “this day counts”. |
+| `entries` | One row per calendar day (`date` = `YYYY-MM-DD`): free writing, mood key, mood note, energy 1–5, favorite. Derived columns (`word_count`, `has_text`, `answer_count`, `photo_count`, `favorite_moments`, `tag_count`) are refreshed in the same transaction as every change; `has_content` is a generated column and is the single definition of “this day counts” (writing, a mood, energy, a photo or a tag). |
 | `answers` | Prompt answers per day, with a copy of the question’s wording (`prompt_text`) so edits to custom prompts never change old answers. |
 | `photos` | Photo rows: day, content hash, stored file, caption, order, favorite, thumbnail flag, `removed_at` for “Recently removed”. No foreign key to `entries`, so deleting a day keeps its photos recoverable. |
 | `daily_prompts` | The featured question shown for each date (saved on first view), with shuffle count and “skipped”. |
 | `prompt_prefs` | Favorite / hidden flags for any prompt id. |
 | `custom_prompts` | The user’s own questions (archived rather than deleted). |
 | `moods` | The mood vocabulary: label, icon, color, order, hidden, built-in. Moods are hidden, never deleted. |
-| `monthly_reflections` | Answers to the monthly questions and the “Dear me” letter, per month. |
+| `monthly_reflections` | Answers to the monthly questions, the “Dear me” letter and the month’s intention (`intention`), per month. |
+| `yearly_reflections` | The same for a year (Year in review). |
+| `tags` | The tag vocabulary: `name` (the key: the label in lower case), label, `quick` (shown as a chip on every day), order. |
+| `entry_tags` | Tags on days: `picked` (tapped as a chip) and/or `written` (`#tag` in the day’s writing, answers, mood note or captions). `refresh()` keeps `written` in step with the text, drops rows that are neither, and removes tags that are neither quick chips nor used. |
+| `removed_days` | Days deleted with *Delete entry*: their fields, answers and picked tags as versioned JSON, plus the photos that went to Recently removed with them (`store/removedDays.ts`). |
+| `pinned_prompts` | Up to three prompts asked every day, with a weekday bitmask (bit 0 = Sunday). |
+| `capsules` | Letters to a future day: `open_on`, `written_on`, body, `opened_at`. Editable only on `written_on`; the body isn’t sent to the interface while sealed (`store/capsules.ts`, using the main process’s own date). |
+| `writing_index` | FTS5 table for writing that isn’t part of a day: `kind` (`month`, `year`, `capsule`), `ref`, `text`. Sealed letters are never in it. |
 | `settings` | JSON values per key, re-validated on read (malformed values fall back to defaults). Keys starting with `internal.` hold things like the window size. |
 
 The PIN lock is deliberately **not** in the database: it lives in `lock.json` next to it (see *The PIN lock* below).
@@ -95,6 +102,12 @@ The PIN lock is deliberately **not** in the database: it lives in `lock.json` ne
 **To change the schema:** append a new migration with the next version number. Never edit a released one. Add a
 test next to the ones in `tests/unit/migrations.test.ts`.
 
+Version 2 (mJournal 1.2) adds the tables above and changes what counts as a day. `has_content` is a generated column,
+which SQLite can't alter, so the migration drops it and adds it again with the new rule — nothing else in the schema
+refers to it, so no table is rebuilt (and no foreign-key cascade runs). After any migration, and after every restore,
+`Journal.refreshDerived()` recalculates every day (picking up `#tags` already in old writing) and rebuilds both search
+indexes.
+
 ## Important flows
 
 ### Saving while writing
@@ -112,9 +125,17 @@ SQLite runs in WAL mode with `synchronous = FULL`, so a committed save survives 
 2. The bytes are written atomically to `photos/<first 2 hex>/<sha256>.<ext>` unless that file already exists.
    Identical photos are therefore stored once, and two photos can never collide.
 3. The interface fetches the original through `mj-media://photo/<id>`, decodes it with Chromium (respecting EXIF
-   orientation), scales it down and sends back a WebP thumbnail, stored as `thumbnails/<sha256>.webp`.
+   orientation), scales it down and sends back a WebP thumbnail, stored as `thumbnails/<sha256>.webp`. Each finished
+   thumbnail is announced to the photos showing it (`useThumbnailVersion` in `renderer/lib/thumbnails.ts`); the views
+   reload their data once, when the queue is empty, so a large gallery doesn't reload once per photo. A restore starts
+   with an empty `thumbnails/` folder, so it clears every `has_thumbnail` flag (`photos.forgetThumbnails()`), and a
+   thumbnail that fails to load (the folder was deleted) is made again once per session.
 4. Removing a photo sets `removed_at`. Deleting it permanently is a separate, confirmed step, and the file is only
    deleted when no other photo row uses it. Originals on the user’s disk are only ever read.
+5. Photos can be reordered within a day (`photos.reorder`) and moved to another day (`photos.moveToDay`, which
+   refreshes both days). Selections larger than `MAX_IMPORT_BATCH` (30, `core/photos.ts`) are sent in batches; a day
+   holds up to 60 photos. Memories asks for `GALLERY_PAGE_SIZE` (120) photos at a time and grows the request as you
+   scroll, so reloads keep everything that is already shown.
 
 ### Complete backup and restore
 
@@ -126,7 +147,79 @@ SQLite runs in WAL mode with `synchronous = FULL`, so a committed save survives 
   hashes, then opens the extracted database and runs `PRAGMA integrity_check`.
 - `host.ts → restore` closes the journal, moves the current database and photos to
   `backups/previous-journal-<time>/`, moves the staged files in and reopens. If any step fails, every move is undone
-  and the original journal is reopened.
+  and the original journal is reopened. A restored backup clears every thumbnail flag (its thumbnails folder starts
+  empty).
+- **Snapshots** restore the same way (`host.inspectSnapshot`): the named file must be one listed in
+  `backups/automatic`; a copy is staged, integrity-checked and counted, and `restore.ts → swapInDatabase` moves only
+  the database aside — photos stay. `snapshots.ts → snapshotsToKeep` thins the daily copies to the newest of each of
+  the last 7 days, 4 weeks and 6 months, by the date in their names; pre-upgrade copies are never pruned.
+
+### Password-protected backups
+
+`services/backupCrypto.ts` (plain `node:crypto`). A key is derived from the password with scrypt (N = 2¹⁷, r = 8,
+p = 1, 16-byte salt). `writeBackup` then pipes the .zip through AES-256-GCM as it is written, so no unprotected copy
+touches the disk:
+
+```text
+"MJBKENC1" | header length (uint32 BE) | header JSON {format, cipher, kdf, N, r, p, salt, nonce, check} | ciphertext | 16-byte tag
+```
+
+The whole header is authenticated as additional data. `check` is an HMAC of a constant under the key, so a wrong
+password is recognised before anything is decrypted, and header values are range-checked before scrypt runs
+(memory ≤ 512 MiB, header ≤ 4 KB). Restoring decrypts into `.tmp/decrypt-*`, then runs the usual `stageBackup`
+checks; the decrypted copy is deleted either way. The key — never the password — is remembered in `backup-key.json`
+beside the journal (outside the database, so never in a backup), which lets automatic backups be protected without
+asking and lets this computer restore its own protected backups directly.
+
+### Automatic backups
+
+`services/backups.ts` (`Backups`, Electron-free) decides and writes; `index.ts` calls `runIfDue()` a minute after
+start, every hour and after resume. The folder is an internal setting chosen only through a main-process folder
+dialog, so the interface can't point backups at arbitrary paths. A backup is due 20 hours (daily) or 6½ days
+(weekly) after the last one; only one is written at a time; files are named `mJournal-auto-backup-<stamp>.zip`
+(or `.mjbackup`) and pruning only ever deletes files with that name, beyond the number to keep. Failures are kept in
+`internal.autoBackupError` for Settings and cleared by the next success. `BackupStatus.remind` drives the reminder on
+Today: at least 7 journaled days, no complete backup for 30 days, not snoozed (14 days).
+
+### Search
+
+- `core/search.ts` turns what is typed into a query: words match as prefixes, `"quoted words"` must appear together
+  (the last one as a prefix), and `-word` / `-"a phrase"` leave days out (`(…) NOT (… OR …)`; exclusions alone find
+  nothing). Only letters and digits survive and every term is quoted, so no FTS syntax from input reaches SQLite.
+- Days are searched in `search_index` (writing, answers, mood notes, captions and tag labels). Monthly and yearly
+  reflections and opened letters are in `writing_index` (`store/writingIndex.ts`), kept current in the same transaction
+  as each save; `journal.searchWriting` returns them with snippets, filtered by the search's dates.
+- A result opens its page with `?q=`. `findMatches()` finds the same words in the text (folding case and accents the
+  way the index does), and `AutoTextarea`'s `highlight` draws them: a mirror of the text with `<mark>`s sits behind the
+  transparent textarea, copying its computed font, padding and size, so the field stays fully editable. The
+  `SearchBanner` counts the marks and steps through them.
+
+### Year in review
+
+`store/years.ts` (`YearStore.recap`) counts the year the way the monthly recap counts a month, adds each month's
+intention, picks moments with the same rules (`store/moments.ts`, shared with the month; a year keeps at most six
+favorite days, four favorite answers and two photo days, spread over the year), up to 12 photos (favorites first) and
+the top tags. Its reflection lives in `yearly_reflections`. The page is `#/year/<year>` (`views/YearView.tsx`), reached
+from Monthly, Insights and — from 15 December to 31 January — a card on Today.
+
+### Tray, sign-in and the quick note
+
+- **Tray** (`main/tray.ts`): shown while *Keep mJournal in the tray* is on (Open / Quick note… / Quit). `window.ts`
+  then hides the window on close — after the interface has saved, like a real close — and `index.ts` locks it when a
+  PIN is set. A `quitting` flag (set by `before-quit`, the tray's Quit, the update installer's `quitForUpdate`, Windows
+  `session-end` and `powerMonitor` `shutdown`) makes closing really close. Turning the tray off brings a hidden window
+  back. Tray icons are `resources/tray-16.png` and `tray-32.png`, rendered by `npm run icons`.
+- **Sign-in** (`main/autostart.ts`): Windows uses `app.setLoginItemSettings` with the installed exe or the portable
+  file itself; Linux writes `$XDG_CONFIG_HOME/autostart/mjournal.desktop` (Exec quoted per the desktop-entry spec,
+  `main/desktopEntry.ts`), rewritten at every start while on. mJournal then starts with `--hidden`: in the tray, or
+  minimized without one. Not available in development builds.
+- **Quick note**: the chosen accelerator is claimed with `globalShortcut` (`DesktopStatus.shortcut.registered` says
+  whether that worked). It and the tray item show the window and send `quick-note`; the request is kept above the PIN
+  lock (`renderer/lib/quickNote.ts`), so the box opens after unlocking. Saving flushes pending edits, then
+  `entries.appendToBody` adds "HH:MM — …" after a blank line in one transaction, and `refreshDay()` reloads an open
+  day page.
+- **Drawings** (`components/DoodleDialog.tsx`): a 1200×800 canvas (pointer events, pen pressure, cream paper), saved as
+  a PNG through `photos.importData`, so it is an ordinary photo of the day.
 
 ### Motion, the welcome guide and tips
 
@@ -152,7 +245,8 @@ SQLite runs in WAL mode with `synchronous = FULL`, so a committed save survives 
 - Logs never contain journal content. There is no telemetry. The only network request is the update check (below);
   the interface itself can’t reach the network at all (its content-security policy allows no remote origins).
 - Optional PIN lock (below). It keeps mJournal's window closed; it is not encryption.
-- Not done: encryption at rest. Protecting the journal relies on the operating system account and disk encryption.
+- Backups can be password-protected (see *Password-protected backups*); the journal folder itself is not encrypted:
+  protecting it relies on the operating system account and disk encryption.
 
 ### The PIN lock
 
@@ -265,15 +359,25 @@ to the executable together with `LICENSE`; `tests/unit/notices.test.ts` fails wh
   backup and restore (round trip, cancel, corrupted, truncated, path traversal, absolute paths, links, unexpected
   files, tampered manifest, database or photos); API validation; version comparison and update-check scheduling (with
   fake timers); the PIN lock (hashing, pauses across restarts, tries sent in parallel, a damaged lock file, restoring a
-  backup) and every API method refusing to run while locked; third-party notices being up to date.
+  backup) and every API method refusing to run while locked; third-party notices being up to date. Since 1.2 also:
+  the version 1 → 2 upgrade of a journal with data; password-protected backups (round trips with a typed password and
+  the remembered key, wrong passwords, changed or truncated files); automatic backups (when they're due, pruning that
+  leaves other files alone, a missing folder, the reminder); snapshot retention and restoring a snapshot; tags
+  (`#tag` edge cases, tag-only days, renaming rules); recently removed days and how they merge back; prompts asked
+  every day; letters to the future (sealing with a fake clock); search phrases, exclusions and highlight ranges;
+  searching reflections and letters; the year in review; the extra insights; moving and paging photos; the
+  desktop-file quoting for opening at sign-in; quick notes.
 - `tests/e2e` (Playwright driving the built app with a temporary `MJOURNAL_DATA_DIR`): clean start; writing, closing
   the window and reopening; editing earlier days; calendar navigation; photos with duplicate names and thumbnails;
   missing photo files; search and filters; monthly reflection persistence; JSON and CSV export; backup and confirmed
   restore; corrupted backup; theme switching; the welcome guide (with animations on, and in the smallest window);
   one-time tips; the update note (against a local stand-in for GitHub); keyboard-only use; the PIN lock (set in
   Settings, the next start locked with journal requests and photos refused, wrong PIN, Ctrl+L saving first, locking
-  after a minute without input with Playwright's fake clock, turning it off). Native dialogs and
-  `shell.openExternal` are stubbed in the main process. The other tests run with reduced motion and skip the guide.
+  after a minute without input with Playwright's fake clock, turning it off); since 1.2 also thumbnails coming back
+  after a restore, text size, reordering and moving photos, automatic and password-protected backups, restoring a
+  snapshot, tags, deleting and restoring a day, prompts asked every day and the intention, letters to the future,
+  opening a search result with its matches marked, the year in review, the new insights, a quick note, closing to the
+  tray and drawing. Native dialogs and `shell.openExternal` are stubbed in the main process. The other tests run with reduced motion and skip the guide.
   On GitHub Actions each end-to-end test gets one retry, and the whole suite runs on both Windows and Linux.
 
 ## How-tos
@@ -285,6 +389,7 @@ to the executable together with `LICENSE`; `tests/unit/notices.test.ts` fails wh
 - **Change colors or type:** design tokens live in `renderer/styles/tokens.css` (light values on `:root`, dark values
   in the `prefers-color-scheme: dark` block). The window title bar colors are in `core/theme.ts`; keep them in sync
   with `--chrome-bg`.
-- **Change the icon:** edit `build/icon.svg` (and `build/icon-small.svg` for 16–24 px), then run `npm run icons`.
+- **Change the icon:** edit `build/icon.svg` (and `build/icon-small.svg` for 16–24 px and the tray), then run
+  `npm run icons`.
 - **Add a tip:** place `<Tip id="…">` at the top of a view with a new id (lowercase letters, digits and dashes).
   Never reuse or rename an id: dismissed ids are stored in settings.

@@ -1,6 +1,14 @@
 /** Settings: personal touches, appearance, moods, prompts, backups and privacy. */
 import { useEffect, useState, type ReactNode } from 'react';
-import type { Settings, ThemePreference, WritingFont } from '@core/api';
+import {
+  QUICK_NOTE_SHORTCUTS,
+  TEXT_SIZES,
+  type QuickNoteShortcut,
+  type Settings,
+  type TextSize,
+  type ThemePreference,
+  type WritingFont,
+} from '@core/api';
 import { formatLongDate, todayKey, type DateFormatPreference } from '@core/dates';
 import type { UpdateStatus } from '@core/updates';
 import { Icon, type IconName } from '../components/Icon';
@@ -8,15 +16,18 @@ import { LogoMark, Wordmark } from '../components/Logo';
 import { downloadPercent, installUpdate, openReleasePage, UpdateProgress } from '../components/UpdateNotice';
 import { api, errorMessage } from '../lib/api';
 import { useApp, type AppState } from '../lib/app';
+import { useQuery } from '../lib/data';
 import { withThemeFade } from '../lib/motion';
 import { scrollMainTo } from '../lib/scroll';
 import { useToday } from '../lib/time';
 import { useUpdateStatus } from '../lib/updates';
 import { BackupSettings } from './settings/BackupSettings';
-import { DataSettings, RemovedPhotos } from './settings/DataSettings';
+import { DataSettings, RemovedItems } from './settings/DataSettings';
+import { LetterSettings } from './settings/LetterSettings';
 import { MoodSettings } from './settings/MoodSettings';
 import { PinSettings } from './settings/PinSettings';
 import { PromptSettings } from './settings/PromptSettings';
+import { TagSettings } from './settings/TagSettings';
 import './settings.css';
 
 const SECTIONS: { id: string; label: string; icon: IconName }[] = [
@@ -24,12 +35,14 @@ const SECTIONS: { id: string; label: string; icon: IconName }[] = [
   { id: 'appearance', label: 'Appearance', icon: 'sun' },
   { id: 'dates', label: 'Dates & calendar', icon: 'calendar' },
   { id: 'moods', label: 'Moods', icon: 'heart' },
+  { id: 'tags', label: 'Tags', icon: 'tag' },
   { id: 'prompts', label: 'Prompts', icon: 'quote' },
-  { id: 'streaks', label: 'Streaks & reminder', icon: 'bell' },
+  { id: 'streaks', label: 'Reminder & background', icon: 'bell' },
   { id: 'pin', label: 'PIN lock', icon: 'lock' },
   { id: 'backup', label: 'Backup & export', icon: 'download' },
   { id: 'data', label: 'Data & privacy', icon: 'folder' },
   { id: 'removed', label: 'Recently removed', icon: 'trash' },
+  { id: 'letters', label: 'Letters to the future', icon: 'envelope' },
   { id: 'guide', label: 'Guide & tips', icon: 'leaf' },
   { id: 'updates', label: 'Updates', icon: 'sprout' },
   { id: 'about', label: 'Shortcuts & about', icon: 'info' },
@@ -75,12 +88,14 @@ export function SettingsView({ section }: { section: string | null }) {
           <AppearanceSettings />
           <DateSettings />
           <MoodSettings />
+          <TagSettings />
           <PromptSettings />
           <StreakSettings />
           <PinSettings />
           <BackupSettings />
           <DataSettings />
-          <RemovedPhotos />
+          <RemovedItems />
+          <LetterSettings />
           <GuideSettings />
           <UpdateSettings />
           <AboutSettings />
@@ -161,7 +176,7 @@ function YouSettings() {
   );
 }
 
-function Segmented<T extends string>({
+export function Segmented<T extends string>({
   label,
   value,
   options,
@@ -218,6 +233,21 @@ function AppearanceSettings() {
             { value: 'sans', label: 'Clean' },
             { value: 'hand', label: 'Handwritten' },
           ]}
+        />
+      </div>
+      <div className="setting-row">
+        <div>
+          <h3>Text size</h3>
+          <p className="muted">
+            Makes everything in mJournal larger or smaller. <span className="kbd">Ctrl + =</span> and{' '}
+            <span className="kbd">Ctrl + −</span> change it too; <span className="kbd">Ctrl + 0</span> goes back to 100 %.
+          </p>
+        </div>
+        <Segmented<string>
+          label="Text size"
+          value={String(settings.textSize)}
+          onChange={(value) => void set({ textSize: Number(value) as TextSize })}
+          options={TEXT_SIZES.map((size) => ({ value: String(size), label: `${size} %` }))}
         />
       </div>
       <div className="setting-row">
@@ -281,11 +311,18 @@ function DateSettings() {
   );
 }
 
+/** "Ctrl + Alt + J" for "CommandOrControl+Alt+J". */
+function shortcutLabel(accelerator: string): string {
+  return accelerator.replace('CommandOrControl', 'Ctrl').split('+').join(' + ');
+}
+
 function StreakSettings() {
   const { settings, set, error } = useSetting();
   const { info } = useApp();
+  const desktop = useQuery('desktop-status', () => api.app.desktopStatus(), ['settings']);
+  const linux = info.platform === 'linux';
   return (
-    <SettingsSection id="streaks" title="Streaks & reminder">
+    <SettingsSection id="streaks" title="Streaks, reminder & background">
       <div className="setting-row">
         <div>
           <h3>Show my journaling streak</h3>
@@ -300,8 +337,8 @@ function StreakSettings() {
         <div>
           <h3>Evening reminder</h3>
           <p className="muted">
-            mJournal doesn’t run in the background, so this gentle reminder can only appear{' '}
-            <strong>while mJournal is open</strong> (minimized is fine). It stays quiet on days you’ve already written.
+            This gentle reminder appears <strong>while mJournal is running</strong> — open, minimized, or kept in the tray
+            (below). It stays quiet on days you’ve already written.
           </p>
           {!info.notificationsSupported && <p className="notice">Notifications aren’t available on this system.</p>}
         </div>
@@ -326,6 +363,73 @@ function StreakSettings() {
             />
           </label>
         </div>
+      </div>
+      <div className="setting-row">
+        <div>
+          <h3>Keep mJournal in the tray</h3>
+          <p className="muted">
+            Closing the window then only hides it: mJournal waits in the {linux ? 'panel' : 'notification area'}, ready for
+            the reminder and the quick note. With a PIN, it locks while hidden. <em>Quit mJournal</em> in the tray’s menu
+            really closes it.
+            {linux && ' Your desktop needs a tray area (on GNOME, the AppIndicator extension, which Zorin OS and Ubuntu include).'}
+          </p>
+        </div>
+        <label className="switch">
+          <input type="checkbox" checked={settings.keepInTray} onChange={(event) => void set({ keepInTray: event.target.checked })} />
+          <span className="visually-hidden">Keep mJournal in the tray</span>
+        </label>
+      </div>
+      <div className="setting-row">
+        <div>
+          <h3>Open mJournal when I sign in</h3>
+          <p className="muted">
+            Starts mJournal in the background when you sign in to your computer — in the tray if it’s kept there, otherwise
+            minimized.
+          </p>
+          {desktop.data && !desktop.data.canOpenAtLogin && (
+            <p className="notice">This is available in the installed mJournal (and the AppImage).</p>
+          )}
+        </div>
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={settings.openAtLogin}
+            disabled={desktop.data ? !desktop.data.canOpenAtLogin : true}
+            onChange={(event) => void set({ openAtLogin: event.target.checked })}
+          />
+          <span className="visually-hidden">Open mJournal when I sign in</span>
+        </label>
+      </div>
+      <div className="setting-row">
+        <div>
+          <h3>Quick note shortcut</h3>
+          <p className="muted">
+            A shortcut that works anywhere on your computer while mJournal is running: it opens a small box, and what you
+            write goes to the end of today’s page.
+          </p>
+          {desktop.data?.shortcut && !desktop.data.shortcut.registered && (
+            <p className="notice">
+              {shortcutLabel(desktop.data.shortcut.accelerator)} is already used by another app
+              {linux ? ', or your desktop doesn’t allow such shortcuts' : ''}. Please choose another one — “Quick note…” in
+              the tray works either way.
+            </p>
+          )}
+        </div>
+        <label>
+          <span className="visually-hidden">Quick note shortcut</span>
+          <select
+            className="select"
+            value={settings.quickNoteShortcut}
+            onChange={(event) => void set({ quickNoteShortcut: event.target.value as QuickNoteShortcut })}
+          >
+            <option value="">Off</option>
+            {QUICK_NOTE_SHORTCUTS.map((accelerator) => (
+              <option key={accelerator} value={accelerator}>
+                {shortcutLabel(accelerator)}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       <ErrorLine error={error} />
     </SettingsSection>
@@ -457,6 +561,9 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl + F', 'Search your journal'],
   ['Ctrl + S', 'Save now (mJournal also saves as you type)'],
   ['Ctrl + L', 'Lock mJournal (when a PIN is set)'],
+  ['Ctrl + = / Ctrl + −', 'Larger / smaller text'],
+  ['Ctrl + 0', 'Text back to 100 %'],
+  ['Ctrl + Alt + J (if chosen)', 'A quick note, from anywhere — see Reminder & background'],
   ['Alt + ← / →', 'Previous / next day'],
   ['Arrow keys', 'Move around the calendar; Page Up / Page Down change month'],
   ['Esc', 'Close a dialog or photo'],

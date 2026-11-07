@@ -350,6 +350,30 @@
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
 }
+/* Reordering by drag: the dragged photo fades, a bar shows where it will land. */
+.photo-grid li {
+  position: relative;
+}
+.photo-grid li.is-dragged .photo-tile {
+  opacity: 0.45;
+}
+.photo-grid li.drop-before::before,
+.photo-grid li.drop-after::after {
+  content: '';
+  position: absolute;
+  top: 6%;
+  bottom: 6%;
+  width: 3px;
+  border-radius: var(--r-full);
+  background: var(--focus);
+  pointer-events: none;
+}
+.photo-grid li.drop-before::before {
+  left: -5.5px;
+}
+.photo-grid li.drop-after::after {
+  right: -5.5px;
+}
 .photo-fav {
   position: absolute;
   right: 6px;
@@ -631,6 +655,13 @@ dialog.lightbox::backdrop {
   flex-wrap: wrap;
   gap: 8px;
 }
+.lightbox-move {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--paper-sunk);
+}
 .lightbox-actions [aria-pressed='true'] {
   color: var(--accent-text);
 }
@@ -651,4 +682,230 @@ dialog.lightbox::backdrop {
     border-top: 1px solid var(--line);
     max-height: 45vh;
   }
+}
+
+/* ---------- Tags ---------- */
+.tag-picker {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.tag-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  white-space: nowrap;
+}
+button.tag-chip {
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+button.tag-chip:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.tag-chip[aria-pressed='true'] {
+  background: var(--sage-50);
+  border-color: var(--sage-300);
+  color: var(--sage-700);
+}
+.tag-chip.written {
+  border-style: dashed;
+}
+button.tag-chip:disabled {
+  cursor: default;
+}
+.tag-chip.tag-new {
+  border-style: dashed;
+  color: var(--ink-muted);
+}
+.tag-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tag-input {
+  width: 150px;
+  height: 30px;
+  padding: 0 10px;
+}
+
+/* ---------- Prompts asked every day ---------- */
+.answer-card.pinned {
+  border-color: var(--lavender-100);
+}
+.pin-btn[aria-pressed='true'] {
+  color: var(--lavender-700);
+}
+
+/* ---------- The month's intention on Today ---------- */
+.intention-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: var(--text-sm);
+  color: var(--sage-700);
+}
+.intention-line a {
+  color: inherit;
+}
+.intention-text {
+  font-family: var(--font-display);
+  font-style: italic;
+}
+
+/* ---------- Letters to a future day ---------- */
+.letter-card {
+  background: var(--paper);
+  border-color: var(--rose-100);
+}
+.letter-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--accent-text);
+}
+.letter-card-head h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  color: var(--ink);
+}
+.letter-card .letter-note {
+  margin: 0 0 10px;
+}
+.letter-body p {
+  margin: 0 0 0.9em;
+  white-space: pre-wrap;
+  font-family: var(--font-writing, inherit);
+  font-size: var(--writing-size);
+  line-height: var(--writing-leading);
+}
+.future-letters {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  width: 100%;
+  margin: 8px 0 14px;
+  text-align: left;
+}
+.future-letters .letter-card {
+  width: 100%;
+}
+.sealed-letter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  background: var(--rose-50);
+  color: var(--accent-text);
+}
+.sealed-letter span {
+  flex: 1;
+}
+
+/* ---------- Drawing ---------- */
+.draw-something {
+  margin-top: 8px;
+}
+.doodle {
+  display: grid;
+  gap: 10px;
+}
+.doodle-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.doodle-inks {
+  display: inline-flex;
+  gap: 6px;
+}
+/* Undo and Clear stay together, at the end of the row (or of the next one when it wraps). */
+.doodle-history {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.doodle-ink {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--paper-raised);
+  box-shadow: 0 0 0 1px var(--line-strong);
+  cursor: pointer;
+}
+.doodle-ink[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--focus);
+}
+.doodle-canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: #fffaf2;
+  cursor: crosshair;
+  touch-action: none;
+}
+.doodle-canvas:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.doodle-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+/* ---------- Quick note ---------- */
+.quick-note {
+  display: grid;
+  gap: 10px;
+}
+.quick-note-text {
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+.quick-note-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.quick-note-mood summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.quick-note-mood[open] summary {
+  margin-bottom: 10px;
 }

@@ -3,12 +3,12 @@ import type { JournalMonthCount, SearchPage, SearchQuery, SearchResult } from '@
 import { toFtsQuery } from '@core/search';
 import type { SQLInputValue } from 'node:sqlite';
 import type { Db } from './database';
-import { toDaySummary, type EntryRow } from './entries';
+import { TAG_LABELS_SELECT, toDaySummary, type EntryRow } from './entries';
 
 export const DEFAULT_PAGE_SIZE = 30;
 export const MAX_PAGE_SIZE = 100;
 
-type ResultRow = EntryRow & { first_answer: string | null; snippet?: string | null };
+type ResultRow = EntryRow & { first_answer: string | null; tag_labels: string | null; snippet?: string | null };
 
 export class SearchStore {
   constructor(private readonly db: Db) {}
@@ -37,6 +37,10 @@ export class SearchStore {
       params.push(...query.moods);
     }
     if (query.withPhotos) where.push('e.photo_count > 0');
+    if (query.tags && query.tags.length > 0) {
+      where.push(`e.date IN (SELECT entry_date FROM entry_tags WHERE tag IN (${query.tags.map(() => '?').join(', ')}))`);
+      params.push(...query.tags);
+    }
     if (query.favoritesOnly) where.push('(e.favorite = 1 OR e.favorite_moments > 0)');
 
     const from = fts
@@ -55,7 +59,8 @@ export class SearchStore {
     const rows = this.db.all<ResultRow>(
       `SELECT e.*,
          (SELECT a.answer FROM answers a WHERE a.entry_date = e.date AND a.answer <> ''
-           ORDER BY a.position LIMIT 1) AS first_answer
+           ORDER BY a.position LIMIT 1) AS first_answer,
+         ${TAG_LABELS_SELECT}
          ${snippet}
        FROM ${from}
        WHERE ${pageWhere.join(' AND ')}

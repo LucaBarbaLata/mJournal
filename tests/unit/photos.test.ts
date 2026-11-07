@@ -127,7 +127,7 @@ describe('photo import', () => {
     const [photo] = journal.photos.forDay('2026-10-24');
     expect(photo.missing).toBe(true);
     expect(journal.photos.stats().missing).toBe(1);
-    expect(journal.photos.gallery({})[0].missing).toBe(true);
+    expect(journal.photos.gallery({}).photos[0].missing).toBe(true);
   });
 
   it('removes to "Recently removed" and restores without touching files', async () => {
@@ -186,14 +186,86 @@ describe('photo import', () => {
     journal.entries.update('2026-09-30', { mood: 'happy', body: 'September day' });
     await journal.photos.importSources('2026-09-30', [{ name: 'a.png', data: PNG_1PX }]);
     await journal.photos.importSources('2026-10-24', [{ name: 'b.jpg', data: JPEG_1PX }]);
-    expect(journal.photos.gallery({}).map((p) => p.date)).toEqual(['2026-10-24', '2026-09-30']);
-    expect(journal.photos.gallery({ from: '2026-09-01', to: '2026-09-30' })).toMatchObject([
-      { date: '2026-09-30', mood: 'happy', excerpt: 'September day' },
-    ]);
+    expect(journal.photos.gallery({}).photos.map((p) => p.date)).toEqual(['2026-10-24', '2026-09-30']);
+    expect(journal.photos.gallery({ from: '2026-09-01', to: '2026-09-30' })).toMatchObject({
+      photos: [{ date: '2026-09-30', mood: 'happy', excerpt: 'September day' }],
+      hasMore: false,
+    });
     expect(journal.photos.galleryMonths()).toEqual([
       { month: '2026-10', count: 1 },
       { month: '2026-09', count: 1 },
     ]);
+  });
+
+  it('loads the gallery a page at a time, in a stable order', async () => {
+    const journal = openJournal();
+    for (const day of ['2026-10-20', '2026-10-21', '2026-10-22']) {
+      await journal.photos.importSources(day, [
+        { name: 'a.png', data: PNG_1PX },
+        { name: 'b.jpg', data: JPEG_1PX },
+        { name: 'c.webp', data: WEBP_1PX },
+      ]);
+    }
+    const all = journal.photos.gallery({ limit: 100 });
+    expect(all.hasMore).toBe(false);
+    expect(all.photos.map((p) => p.date)).toEqual([
+      ...Array(3).fill('2026-10-22'),
+      ...Array(3).fill('2026-10-21'),
+      ...Array(3).fill('2026-10-20'),
+    ]);
+    const firstPage = journal.photos.gallery({ limit: 4 });
+    expect(firstPage.hasMore).toBe(true);
+    expect(firstPage.photos.map((p) => p.id)).toEqual(all.photos.slice(0, 4).map((p) => p.id));
+    // A larger page starts with the same photos: growing the page never reorders what was shown.
+    expect(journal.photos.gallery({ limit: 7 }).photos.map((p) => p.id)).toEqual(all.photos.slice(0, 7).map((p) => p.id));
+    expect(journal.photos.gallery({ limit: 9 }).hasMore).toBe(false);
+    expect(journal.photos.gallery({ from: '2026-10-21', to: '2026-10-21', limit: 2 })).toMatchObject({ hasMore: true });
+  });
+
+  it('moves a photo to another day and updates both days', async () => {
+    const journal = openJournal();
+    journal.entries.update('2026-10-20', { body: 'Already written' });
+    const { imported } = await journal.photos.importSources('2026-10-24', [
+      { name: 'a.png', data: PNG_1PX },
+      { name: 'b.jpg', data: JPEG_1PX },
+    ]);
+    journal.photos.update(imported[0].id, { caption: 'Sunset over the lake' });
+    const moved = journal.photos.moveToDay(imported[0].id, '2026-10-20');
+    expect(moved).toMatchObject({ date: '2026-10-20', caption: 'Sunset over the lake', position: 0 });
+    expect(journal.photos.forDay('2026-10-24').map((p) => p.id)).toEqual([imported[1].id]);
+    expect(journal.photos.forDay('2026-10-20').map((p) => p.id)).toEqual([imported[0].id]);
+    expect(journal.entries.monthSummaries('2026-10').map((d) => [d.date, d.photoCount])).toEqual([
+      ['2026-10-20', 1],
+      ['2026-10-24', 1],
+    ]);
+    // The caption is now found on its new day.
+    expect(journal.search.search({ text: 'sunset' }).results.map((r) => r.date)).toEqual(['2026-10-20']);
+    // Moving the last photo away leaves the old day empty, so it no longer counts.
+    journal.photos.moveToDay(imported[1].id, '2026-10-21');
+    expect(journal.entries.contentDays()).toEqual(['2026-10-20', '2026-10-21']);
+  });
+
+  it('refuses to move a removed photo or to overfill a day', async () => {
+    const journal = openJournal();
+    const { imported } = await journal.photos.importSources('2026-10-24', [{ name: 'a.png', data: PNG_1PX }]);
+    journal.photos.remove(imported[0].id);
+    expect(() => journal.photos.moveToDay(imported[0].id, '2026-10-23')).toThrow(/Recently removed/);
+    journal.photos.restore(imported[0].id);
+    const full = Array.from({ length: 30 }, (_, i) => ({ name: `p${i}.png`, data: PNG_1PX }));
+    await journal.photos.importSources('2026-10-01', full);
+    await journal.photos.importSources('2026-10-01', full);
+    expect(journal.photos.forDay('2026-10-01')).toHaveLength(60);
+    expect(() => journal.photos.moveToDay(imported[0].id, '2026-10-01')).toThrow(/already holds 60 photos/);
+    expect(journal.photos.forDay('2026-10-24')).toHaveLength(1);
+  });
+
+  it('forgets every thumbnail so they are made again', async () => {
+    const journal = openJournal();
+    const { imported } = await journal.photos.importSources('2026-10-24', [{ name: 'a.png', data: PNG_1PX }]);
+    await journal.photos.saveThumbnail(imported[0].id, WEBP_1PX, 1, 1);
+    expect(journal.photos.forDay('2026-10-24')[0].hasThumbnail).toBe(true);
+    journal.photos.forgetThumbnails();
+    expect(journal.photos.forDay('2026-10-24')[0].hasThumbnail).toBe(false);
   });
 
   it('does not treat a stray folder entry as a photo', () => {

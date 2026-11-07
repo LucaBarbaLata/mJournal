@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { TEXT_SIZES } from '@core/api';
 import { ConfirmHost } from './components/Dialog';
+import { QuickNoteDialog } from './components/QuickNoteDialog';
 import { Icon, type IconName } from './components/Icon';
 import { LogoMark, Wordmark } from './components/Logo';
 import { ToastHost } from './components/Toasts';
@@ -7,6 +9,7 @@ import { UpdateNotice, UpdateResultDialog } from './components/UpdateNotice';
 import { native } from './lib/api';
 import { AppProvider, useApp } from './lib/app';
 import { LockProvider, useLock } from './lib/lock';
+import { requestQuickNote } from './lib/quickNote';
 import { href, navigate, useRoute, type RouteName } from './lib/router';
 import { saveQueue } from './lib/saveQueue';
 import { useToday } from './lib/time';
@@ -19,6 +22,7 @@ import { MemoriesView } from './views/MemoriesView';
 import { MonthView } from './views/MonthView';
 import { Onboarding } from './views/Onboarding';
 import { SettingsView } from './views/SettingsView';
+import { YearView } from './views/YearView';
 
 const NAV: { name: RouteName | 'day'; label: string; icon: IconName; to: () => string; key: string }[] = [
   { name: 'today', label: 'Today', icon: 'today', to: href.today, key: '1' },
@@ -74,7 +78,8 @@ function useNavPill(navRef: RefObject<HTMLElement | null>, current: string) {
 }
 
 function Sidebar({ active }: { active: RouteName }) {
-  const current = active === 'day' ? 'today' : active;
+  // A day's page belongs to Today; the year in review belongs to Monthly.
+  const current = active === 'day' ? 'today' : active === 'year' ? 'month' : active;
   const navRef = useRef<HTMLElement>(null);
   const { pill, animate } = useNavPill(navRef, current);
   const { status: lock, lockNow } = useLock();
@@ -136,7 +141,7 @@ function Routes() {
     case 'today':
       return <DayView date={today} />;
     case 'day':
-      return <DayView date={route.date} />;
+      return <DayView date={route.date} query={route.query} />;
     case 'calendar':
       return <CalendarView month={route.month} selected={route.selected} />;
     case 'journal':
@@ -144,7 +149,9 @@ function Routes() {
     case 'memories':
       return <MemoriesView params={route.params} />;
     case 'month':
-      return <MonthView month={route.month} />;
+      return <MonthView month={route.month} query={route.query} />;
+    case 'year':
+      return <YearView year={route.year} query={route.query} />;
     case 'insights':
       return <InsightsView />;
     case 'settings':
@@ -152,9 +159,16 @@ function Routes() {
   }
 }
 
+/** The text size one step larger (+1) or smaller (-1) than `current`, or 100 % for 0. */
+function nextTextSize(current: number, step: -1 | 0 | 1): (typeof TEXT_SIZES)[number] {
+  if (step === 0) return 100;
+  const index = Math.max(0, TEXT_SIZES.findIndex((size) => size === current));
+  return TEXT_SIZES[Math.min(TEXT_SIZES.length - 1, Math.max(0, index + step))];
+}
+
 function Shell() {
   const route = useRoute();
-  const { settings } = useApp();
+  const { settings, updateSettings } = useApp();
   const { status: lock, lockNow } = useLock();
 
   useEffect(() => {
@@ -173,6 +187,14 @@ function Shell() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      // Text size works everywhere, dialogs included: Ctrl + = (or +) larger, Ctrl + − smaller, Ctrl + 0 back to 100 %.
+      const zoom = event.key === '=' || event.key === '+' ? 1 : event.key === '-' || event.key === '_' ? -1 : event.key === '0' ? 0 : null;
+      if (zoom !== null) {
+        event.preventDefault();
+        const next = nextTextSize(settings.textSize, zoom);
+        if (next !== settings.textSize) void updateSettings({ textSize: next }).catch(() => undefined);
+        return;
+      }
       // While a dialog (or the welcome guide) is open, shortcuts would act on the page behind it.
       if (document.querySelector('dialog[open]')) return;
       const item = NAV.find((n) => n.key === event.key);
@@ -195,11 +217,16 @@ function Shell() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [lock.enabled, lockNow]);
+  }, [lock.enabled, lockNow, settings.textSize, updateSettings]);
 
   useEffect(() => {
     document.querySelector('.main-scroll')?.scrollTo({ top: 0 });
-  }, [route.name, route.name === 'day' ? route.date : '', route.name === 'calendar' ? route.month : '']);
+  }, [
+    route.name,
+    route.name === 'day' ? route.date : '',
+    route.name === 'calendar' ? route.month : '',
+    route.name === 'year' ? route.year : '',
+  ]);
 
   return (
     <div className="app">
@@ -215,6 +242,8 @@ function Shell() {
       </div>
       <ConfirmHost />
       <ToastHost />
+      {/* Inside the lock: a quick note asked for while locked opens right after unlocking. */}
+      {settings.onboardingDone && <QuickNoteDialog />}
       {!settings.onboardingDone && <Onboarding />}
       {/* After the welcome guide, and (like everything in Shell) only once the PIN is entered. */}
       {settings.onboardingDone && <UpdateResultDialog />}
@@ -228,11 +257,13 @@ export function App() {
     // so closing works the same while locked.
     const stopFlush = native.onFlushRequest(() => saveQueue.flush());
     const stopNavigate = native.onNavigate((hash) => navigate(hash));
+    const stopQuickNote = native.onQuickNote(() => requestQuickNote());
     const beforeUnload = () => void saveQueue.flush();
     window.addEventListener('beforeunload', beforeUnload);
     return () => {
       stopFlush();
       stopNavigate();
+      stopQuickNote();
       window.removeEventListener('beforeunload', beforeUnload);
     };
   }, []);

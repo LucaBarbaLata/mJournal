@@ -5,8 +5,9 @@
  * the file stays on disk until the user deletes it permanently, and even then
  * it is kept while any other photo still uses the same file.
  */
-import type { GalleryPhoto, ImportResult, JournalMonthCount, PhotoRecord } from '@core/api';
+import type { GalleryPage, ImportResult, JournalMonthCount, PhotoRecord } from '@core/api';
 import type { DateKey } from '@core/dates';
+import { GALLERY_PAGE_SIZE, MAX_GALLERY_LIMIT, MAX_IMPORT_BATCH, MAX_PHOTOS_PER_DAY } from '@core/photos';
 import { makeExcerpt } from '@core/text';
 import { UserFacingError } from '@core/validation';
 import { randomUUID } from 'node:crypto';
@@ -34,8 +35,7 @@ interface PhotoRow {
 
 export type PhotoSource = { name: string; path: string } | { name: string; data: Uint8Array };
 
-export const MAX_IMPORT_BATCH = 30;
-export const MAX_PHOTOS_PER_DAY = 60;
+export { MAX_IMPORT_BATCH, MAX_PHOTOS_PER_DAY };
 export const MAX_CAPTION_LENGTH = 500;
 export const MEDIA_SCHEME = 'mj-media';
 
@@ -186,6 +186,35 @@ export class PhotoStore {
     });
   }
 
+  /** Moves a photo to the end of another day. Both days' counts and search text are updated. */
+  moveToDay(id: string, date: DateKey): PhotoRecord {
+    const row = this.row(id);
+    if (row.removed_at) {
+      throw new UserFacingError('photo-removed', 'This photo is in Recently removed. Restore it first, then move it.');
+    }
+    if (row.entry_date === date) return this.get(id);
+    this.db.transaction(() => {
+      const count = this.db.get<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM photos WHERE entry_date = ? AND removed_at IS NULL',
+        [date],
+      )!.n;
+      if (count >= MAX_PHOTOS_PER_DAY) {
+        throw new UserFacingError('day-full', `That day already holds ${MAX_PHOTOS_PER_DAY} photos.`);
+      }
+      this.entries.ensure(date);
+      const position = this.db.get<{ p: number }>(
+        'SELECT COALESCE(MAX(position), -1) + 1 AS p FROM photos WHERE entry_date = ? AND removed_at IS NULL',
+        [date],
+      )!.p;
+      const now = this.now();
+      this.db.run('UPDATE photos SET entry_date = ?, position = ? WHERE id = ?', [date, position, id]);
+      this.db.run('UPDATE entries SET updated_at = ? WHERE date IN (?, ?)', [now, row.entry_date, date]);
+      this.entries.refresh(row.entry_date);
+      this.entries.refresh(date);
+    });
+    return this.get(id);
+  }
+
   /** Moves a photo to "Recently removed". The file is kept. */
   remove(id: string): void {
     const row = this.row(id);
@@ -230,14 +259,22 @@ export class PhotoStore {
       .map((row) => this.toRecord(row));
   }
 
-  gallery(filter: { from?: DateKey; to?: DateKey }): GalleryPhoto[] {
+  /** The newest photos in a date range, newest day first, at most `limit` of them. */
+  gallery(filter: { from?: DateKey; to?: DateKey; limit?: number }): GalleryPage {
+    const limit = Math.min(Math.max(filter.limit ?? GALLERY_PAGE_SIZE, 1), MAX_GALLERY_LIMIT);
     const rows = this.db.all<PhotoRow & { mood: string | null; body: string }>(
       `SELECT p.*, e.mood, e.body FROM photos p JOIN entries e ON e.date = p.entry_date
        WHERE p.removed_at IS NULL AND p.entry_date >= ? AND p.entry_date <= ?
-       ORDER BY p.entry_date DESC, p.position, p.created_at`,
-      [filter.from ?? '0000-00-00', filter.to ?? '9999-99-99'],
+       ORDER BY p.entry_date DESC, p.position, p.created_at, p.id
+       LIMIT ?`,
+      [filter.from ?? '0000-00-00', filter.to ?? '9999-99-99', limit + 1],
     );
-    return rows.map((row) => ({ ...this.toRecord(row), mood: row.mood, excerpt: makeExcerpt(row.body, 160) }));
+    return {
+      photos: rows
+        .slice(0, limit)
+        .map((row) => ({ ...this.toRecord(row), mood: row.mood, excerpt: makeExcerpt(row.body, 160) })),
+      hasMore: rows.length > limit,
+    };
   }
 
   galleryMonths(): JournalMonthCount[] {
@@ -245,6 +282,14 @@ export class PhotoStore {
       `SELECT substr(entry_date, 1, 7) AS month, COUNT(*) AS count FROM photos
        WHERE removed_at IS NULL GROUP BY month ORDER BY month DESC`,
     );
+  }
+
+  /**
+   * Forgets every thumbnail, so each is made again. A restore starts with an empty thumbnails folder
+   * while the restored database still says which photos had one.
+   */
+  forgetThumbnails(): void {
+    this.db.run('UPDATE photos SET has_thumbnail = 0 WHERE has_thumbnail = 1');
   }
 
   async saveThumbnail(id: string, data: Uint8Array, width: number, height: number): Promise<void> {

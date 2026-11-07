@@ -3,13 +3,28 @@ import { join } from 'node:path';
 import yauzl from 'yauzl';
 import { describe, expect, it } from 'vitest';
 import { dataPaths } from '../../src/main/paths';
+import type { BackupInspection } from '../../src/core/api';
 import { MANIFEST_NAME, writeBackup, type BackupManifest } from '../../src/main/services/backup';
 import { swapInStagedBackup } from '../../src/main/services/restore';
-import { maybeTakeDailySnapshot, takeSnapshot, listSnapshots } from '../../src/main/services/snapshots';
-import { JPEG_1PX, PNG_1PX, fakeClock, openHost as openTestHost, tempDir } from './helpers';
+import {
+  maybeTakeDailySnapshot,
+  takeSnapshot,
+  listSnapshots,
+  snapshotsToKeep,
+} from '../../src/main/services/snapshots';
+import { addDays } from '../../src/core/dates';
+import { LATEST_SCHEMA_VERSION } from '../../src/main/store/migrations';
+import { JPEG_1PX, PNG_1PX, WEBP_1PX, fakeClock, openHost as openTestHost, tempDir } from './helpers';
 import { makeZip } from './zipUtil';
 
 const openHost = (dir = tempDir()) => openTestHost(dir, fakeClock('2026-10-24T18:00:00Z'));
+
+/** Checks an unprotected backup (inspectBackup only asks for a password for protected ones). */
+async function inspect(host: ReturnType<typeof openHost>, file: string): Promise<BackupInspection> {
+  const result = await host.inspectBackup(file);
+  if ('needsPassword' in result) throw new Error('This backup unexpectedly asks for a password.');
+  return result;
+}
 
 async function readZip(file: string): Promise<Map<string, Buffer>> {
   const zip = await yauzl.openPromise(file, { lazyEntries: true, autoClose: false });
@@ -45,6 +60,7 @@ async function fullJournal() {
     { name: 'b.jpg', data: JPEG_1PX },
   ]);
   j.photos.update(photos.imported[0].id, { caption: 'Blanket and berries' });
+  await j.photos.saveThumbnail(photos.imported[0].id, WEBP_1PX, 1, 1);
   j.photos.remove(photos.imported[1].id); // in "Recently removed": still part of the backup
   j.entries.update('2026-10-23', { mood: 'tired' });
   j.reflections.save('2026-10', 'letter', 'Dear me, well done.');
@@ -65,7 +81,7 @@ describe('complete backups', () => {
       app: 'mJournal',
       kind: 'mjournal-backup',
       formatVersion: 1,
-      schemaVersion: 1,
+      schemaVersion: LATEST_SCHEMA_VERSION,
       counts: { entries: 2, photos: 1, monthlyReflections: 1 },
       missingPhotos: [],
     });
@@ -82,7 +98,7 @@ describe('complete backups', () => {
 
     const target = openHost();
     target.journal.entries.update('2026-01-01', { body: 'This journal will be replaced' });
-    const inspection = await target.inspectBackup(archive);
+    const inspection = await inspect(target, archive);
     expect(inspection).toMatchObject({
       fileName: 'backup.zip',
       counts: { entries: 2, photos: 1, monthlyReflections: 1 },
@@ -97,7 +113,8 @@ describe('complete backups', () => {
     expect(j.entries.get('2026-01-01')).toBeNull();
     expect(j.entries.get('2026-10-22')).toMatchObject({ body: 'Picnic day', mood: 'happy', energy: 5, favorite: true });
     expect(j.entries.answers('2026-10-22').map((a) => a.answer)).toEqual(['Mia']);
-    expect(j.photos.forDay('2026-10-22')).toMatchObject([{ caption: 'Blanket and berries', missing: false }]);
+    // Thumbnails aren't part of a backup: the restored journal makes them again.
+    expect(j.photos.forDay('2026-10-22')).toMatchObject([{ caption: 'Blanket and berries', missing: false, hasThumbnail: false }]);
     expect(j.photos.listRemoved()).toHaveLength(1);
     expect(j.photos.listRemoved()[0].missing).toBe(false);
     expect(j.reflections.reflection('2026-10').answers.letter).toBe('Dear me, well done.');
@@ -118,7 +135,7 @@ describe('complete backups', () => {
     await writeBackup(source.journal, archive, '1.0.0');
     const target = openHost();
     target.journal.entries.update('2026-01-01', { body: 'Keep me' });
-    const inspection = await target.inspectBackup(archive);
+    const inspection = await inspect(target, archive);
     await target.cancelRestore(inspection.token);
     expect(target.journal.entries.get('2026-01-01')?.body).toBe('Keep me');
     expect(readdirSync(join(target.root, '.tmp'))).toEqual([]);
@@ -133,7 +150,7 @@ describe('complete backups', () => {
     const archive = join(tempDir(), 'backup.zip');
     const { manifest } = await writeBackup(source.journal, archive, '1.0.0');
     expect(manifest.missingPhotos).toHaveLength(1);
-    const inspection = await openHost().inspectBackup(archive);
+    const inspection = await inspect(openHost(), archive);
     expect(inspection.warnings[0]).toMatch(/1 photo was already missing/);
   });
 });
@@ -233,21 +250,61 @@ describe('restore swap', () => {
 });
 
 describe('daily safety snapshots', () => {
-  it('are taken at most once a day and keep the newest ten', () => {
+  it('are taken at most once a day, also while mJournal stays open', () => {
     const clock = fakeClock('2026-10-01T09:00:00Z');
     const j = openTestHost(tempDir(), clock).journal;
     expect(maybeTakeDailySnapshot(j)).toBeNull(); // nothing to protect yet
     j.entries.update('2026-10-01', { body: 'hello' });
     expect(maybeTakeDailySnapshot(j)).not.toBeNull();
-    expect(maybeTakeDailySnapshot(j)).toBeNull(); // same day
-    for (let i = 0; i < 12; i++) {
-      clock.advance(24 * 3600 * 1000);
-      takeSnapshot(j);
+    // The hourly checks of a running mJournal make no new copy until the last one is old enough.
+    for (let hour = 1; hour < 20; hour++) {
+      clock.advance(3600 * 1000);
+      expect(maybeTakeDailySnapshot(j)).toBeNull();
     }
-    const snapshots = listSnapshots(j.paths.snapshots).filter((s) => s.name.startsWith('mJournal-snapshot-'));
-    expect(snapshots).toHaveLength(10);
+    clock.advance(3600 * 1000);
+    expect(maybeTakeDailySnapshot(j)).not.toBeNull();
     j.settings.update({ autoSnapshots: false });
     clock.advance(48 * 3600 * 1000);
     expect(maybeTakeDailySnapshot(j)).toBeNull();
+  });
+
+  it('keep the newest of each of the last 7 days, 4 weeks and 6 months', () => {
+    const name = (day: string, time = '0900', copy = '') => `mJournal-snapshot-${day}-${time}${copy}.db`;
+    // One snapshot a day for 400 days, ending on Saturday 2026-10-31, plus a second one on the last day.
+    const days = Array.from({ length: 400 }, (_, i) => addDays('2026-10-31', -i));
+    const names = [...days.map((d) => name(d)), name('2026-10-31', '0900', '-2'), 'mJournal-before-migration-v1-x.db'];
+    const keep = snapshotsToKeep(names);
+    const expected = new Set([
+      // The newest copy of each of the last 7 days (the second copy wins on the last day).
+      name('2026-10-31', '0900', '-2'),
+      ...['2026-10-30', '2026-10-29', '2026-10-28', '2026-10-27', '2026-10-26', '2026-10-25'].map((d) => name(d)),
+      // The newest of each of the 4 weeks (Monday to Sunday) — the current week's is already kept.
+      name('2026-10-25'), // Sunday, ends the week of 19 October
+      name('2026-10-18'),
+      name('2026-10-11'),
+      // The newest of each of the last 6 months.
+      name('2026-09-30'),
+      name('2026-08-31'),
+      name('2026-07-31'),
+      name('2026-06-30'),
+      name('2026-05-31'),
+      // Anything that isn't an automatic daily snapshot is left alone.
+      'mJournal-before-migration-v1-x.db',
+    ]);
+    expect([...keep].sort()).toEqual([...expected].sort());
+  });
+
+  it('thin out old snapshots on disk as new ones are taken', () => {
+    const clock = fakeClock('2026-06-01T09:00:00Z');
+    const j = openTestHost(tempDir(), clock).journal;
+    j.entries.update('2026-06-01', { body: 'hello' });
+    for (let i = 0; i < 120; i++) {
+      takeSnapshot(j);
+      clock.advance(24 * 3600 * 1000);
+    }
+    const names = listSnapshots(j.paths.snapshots).map((s) => s.name);
+    expect(names.length).toBeGreaterThanOrEqual(7);
+    expect(names.length).toBeLessThanOrEqual(7 + 4 + 6);
+    expect(snapshotsToKeep(names).size).toBe(names.length);
   });
 });

@@ -61,4 +61,9 @@ contextBridge.exposeInMainWorld('mjournalNative', {
     ipcRenderer.on(EVENTS.lockChanged, listener);
     return () => ipcRenderer.removeListener(EVENTS.lockChanged, listener);
   },
+  onQuickNote(callback: () => void): () => void {
+    const listener = () => callback();
+    ipcRenderer.on(EVENTS.quickNote, listener);
+    return () => ipcRenderer.removeListener(EVENTS.quickNote, listener);
+  },
 });

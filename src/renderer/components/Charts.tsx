@@ -2,7 +2,7 @@
  * Small, readable charts. They show what was recorded and nothing more: no
  * scores, no trends drawn as judgments. Every chart has a text equivalent.
  */
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { DaySummary, MoodRecord } from '@core/api';
 import { monthDays, parseDateKey, type DateKey, type MonthKey } from '@core/dates';
 import { energyLabel } from '@core/moods';
@@ -185,42 +185,55 @@ export function MonthRibbon({
   );
 }
 
-/** Moods recorded per month, stacked. */
-export function StackedMoodChart({
-  months,
+export interface MoodColumn {
+  key: string;
+  /** Under the bar, e.g. "Jan" or "Mon". */
+  label: string;
+  /** In full, for tooltips and the table, e.g. "January 2026" or "Monday". */
+  title: string;
+  total: number;
+  counts: Record<string, number>;
+}
+
+/** Moods per column (months, weekdays…), stacked, with a table for screen readers. */
+export function StackedMoodBars({
+  columns,
   moods,
-  formatMonth,
+  caption,
+  header,
 }: {
-  months: { month: MonthKey; total: number; counts: Record<string, number> }[];
+  columns: MoodColumn[];
   moods: MoodRecord[];
-  formatMonth: (month: MonthKey, width: 'short' | 'long') => string;
+  caption: string;
+  /** The table's first column heading, e.g. "Month". */
+  header: string;
 }) {
-  const max = Math.max(1, ...months.map((m) => m.total));
-  const used = moods.filter((mood) => months.some((m) => m.counts[mood.key]));
+  const max = Math.max(1, ...columns.map((c) => c.total));
+  const used = moods.filter((mood) => columns.some((c) => c.counts[mood.key]));
   return (
     <figure className="chart stacked-chart">
       <ol className="bars">
-        {months.map((m, i) => (
-          <li key={m.month} className="bar-col" style={{ '--i': i } as CSSProperties}>
+        {columns.map((c, i) => (
+          <li key={c.key} className="bar-col" style={{ '--i': i } as CSSProperties}>
             <span className="bar-value numeric" aria-hidden="true">
-              {m.total > 0 ? m.total : ''}
+              {c.total > 0 ? c.total : ''}
             </span>
             <span className="bar-track" aria-hidden="true">
-              <span className="stack" style={{ height: `${(m.total / max) * 100}%` }}>
+              <span className="stack" style={{ height: `${(c.total / max) * 100}%` }}>
                 {used
-                  .filter((mood) => m.counts[mood.key])
+                  .filter((mood) => c.counts[mood.key])
                   .map((mood) => (
                     <span
                       key={mood.key}
                       className="stack-part"
-                      title={`${formatMonth(m.month, 'long')}: ${mood.label} ×${m.counts[mood.key]}`}
-                      style={{ flexGrow: m.counts[mood.key], background: `var(--mood-${mood.color})` }}
+                      title={`${c.title}: ${mood.label} ×${c.counts[mood.key]}`}
+                      style={{ flexGrow: c.counts[mood.key], background: `var(--mood-${mood.color})` }}
                     />
                   ))}
               </span>
             </span>
             <span className="bar-label" aria-hidden="true">
-              {formatMonth(m.month, 'short')}
+              {c.label}
             </span>
           </li>
         ))}
@@ -235,10 +248,10 @@ export function StackedMoodChart({
         </ul>
       )}
       <table className="visually-hidden">
-        <caption>Moods recorded per month</caption>
+        <caption>{caption}</caption>
         <thead>
           <tr>
-            <th scope="col">Month</th>
+            <th scope="col">{header}</th>
             {used.map((mood) => (
               <th key={mood.key} scope="col">
                 {mood.label}
@@ -247,17 +260,70 @@ export function StackedMoodChart({
           </tr>
         </thead>
         <tbody>
-          {months.map((m) => (
-            <tr key={m.month}>
-              <th scope="row">{formatMonth(m.month, 'long')}</th>
+          {columns.map((c) => (
+            <tr key={c.key}>
+              <th scope="row">{c.title}</th>
               {used.map((mood) => (
-                <td key={mood.key}>{m.counts[mood.key] ?? 0}</td>
+                <td key={mood.key}>{c.counts[mood.key] ?? 0}</td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
     </figure>
+  );
+}
+
+/** Moods recorded per month, stacked. */
+export function StackedMoodChart({
+  months,
+  moods,
+  formatMonth,
+}: {
+  months: { month: MonthKey; total: number; counts: Record<string, number> }[];
+  moods: MoodRecord[];
+  formatMonth: (month: MonthKey, width: 'short' | 'long') => string;
+}) {
+  return (
+    <StackedMoodBars
+      caption="Moods recorded per month"
+      header="Month"
+      moods={moods}
+      columns={months.map((m) => ({
+        key: m.month,
+        label: formatMonth(m.month, 'short'),
+        title: formatMonth(m.month, 'long'),
+        total: m.total,
+        counts: m.counts,
+      }))}
+    />
+  );
+}
+
+/** Horizontal bars with a label and a number, for averages and counts (the text says what each number is). */
+export function LabeledBars({
+  items,
+  max,
+}: {
+  items: { key: string; label: ReactNode; value: number; text: string; color?: string }[];
+  max?: number;
+}) {
+  const top = max ?? Math.max(1, ...items.map((item) => item.value));
+  return (
+    <ul className="mood-bars labeled-bars">
+      {items.map((item, i) => (
+        <li key={item.key} style={{ '--i': i } as CSSProperties}>
+          <span className="mood-bars-label">{item.label}</span>
+          <span className="mood-bars-track" aria-hidden="true">
+            <span
+              className="mood-bars-fill"
+              style={{ width: `${(item.value / top) * 100}%`, background: item.color ?? 'var(--lavender-300)' }}
+            />
+          </span>
+          <span className="mood-bars-count numeric">{item.text}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
