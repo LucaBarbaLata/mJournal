@@ -25,7 +25,7 @@ export function formatBytes(bytes: number): string {
 const MIN_PASSWORD = 8;
 
 export function BackupSettings() {
-  const { settings, updateSettings, format } = useApp();
+  const { settings, updateSettings, format, info: app } = useApp();
   const info = useQuery('data-info', () => api.data.info(), ['data', 'entries', 'photos']);
   const status = useQuery('backup-status', () => api.data.backupStatus(), ['data', 'settings']);
   const [busy, setBusy] = useState<string | null>(null);
@@ -152,7 +152,11 @@ export function BackupSettings() {
     <SettingsSection
       id="backup"
       title="Backup & export"
-      description="Your journal lives only on this computer, so a backup somewhere else — a USB drive, another disk — keeps it safe."
+      description={
+        app.journalBesideApp
+          ? 'Your journal lives only in the mJournal Data folder next to mJournal, so a backup on another drive keeps it safe if that one is lost or fails.'
+          : 'Your journal lives only on this computer, so a backup somewhere else — a USB drive, another disk — keeps it safe.'
+      }
     >
       <div className="setting-row">
         <div>

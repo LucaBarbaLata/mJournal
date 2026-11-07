@@ -64,17 +64,20 @@ function engineCacheRoot(): string {
   return app.getPath('appData');
 }
 
-function configurePaths(): string {
+/** Where the journal is, and whether it is the "mJournal Data" folder beside the app (portable mode). */
+function configurePaths(): { journalDir: string; besideApp: boolean } {
   const override = process.env.MJOURNAL_DATA_DIR;
   const portableDir = portableDataDir();
   let journalDir: string;
   let engineDir: string;
+  let besideApp = false;
   if (override) {
     journalDir = resolve(override);
     engineDir = join(journalDir, '.chromium');
   } else if (portableDir && existsSync(portableDir)) {
     journalDir = portableDir;
     engineDir = join(portableDir, '.chromium');
+    besideApp = true;
   } else {
     const name = app.isPackaged ? 'mJournal' : 'mJournal-dev';
     journalDir = join(app.getPath('appData'), name);
@@ -82,10 +85,19 @@ function configurePaths(): string {
   }
   app.setPath('userData', engineDir);
   app.setPath('sessionData', engineDir);
-  return journalDir;
+  return { journalDir, besideApp };
 }
 
-const journalDir = configurePaths();
+const { journalDir, besideApp: journalBesideApp } = configurePaths();
+/** The portable .exe (its launcher sets PORTABLE_EXECUTABLE_FILE to the .exe's own path). */
+const portableApp = Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
+/**
+ * A portable copy doesn't open at sign-in: it would leave a Run entry (or an autostart file) on the computer
+ * it visits, pointing at a file that may be gone. With the journal on a drive beside the app, mJournal doesn't
+ * stay in the tray either, so it isn't left running when that drive is unplugged.
+ */
+const canOpenAtLogin = !portableApp && !journalBesideApp && autostartExecutable() !== null;
+const canKeepInTray = !journalBesideApp;
 const rendererUrl = process.env.ELECTRON_RENDERER_URL ?? `${APP_ORIGIN}/index.html`;
 const isTrustedUrl = (url: string) =>
   url.startsWith(`${APP_ORIGIN}/`) ||
@@ -191,19 +203,21 @@ function applyQuickNoteShortcut(accelerator: string): void {
 
 /** The tray, opening at sign-in and the quick-note shortcut, as the settings say. */
 function applyDesktop(settings: Settings, previous: Settings | null): void {
-  if (settings.keepInTray) tray.show();
+  if (settings.keepInTray && canKeepInTray) tray.show();
   else {
     tray.hide();
     // Without a tray icon, a hidden window would be out of reach: bring it back.
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) focusWindow();
   }
   // Written at every start while on, so a moved AppImage is still found.
-  if (!previous ? settings.openAtLogin : settings.openAtLogin !== previous.openAtLogin) applyOpenAtLogin(settings.openAtLogin);
+  if (canOpenAtLogin && (!previous ? settings.openAtLogin : settings.openAtLogin !== previous.openAtLogin)) {
+    applyOpenAtLogin(settings.openAtLogin);
+  }
   applyQuickNoteShortcut(settings.quickNoteShortcut);
 }
 
 function desktopStatus(): DesktopStatus {
-  return { canOpenAtLogin: autostartExecutable() !== null, trayShown: tray.shown, shortcut: quickNoteShortcut };
+  return { canOpenAtLogin, canKeepInTray, trayShown: tray.shown, shortcut: quickNoteShortcut };
 }
 
 /** Runs a program to its end (the .deb installation) and resolves with its exit code. */
@@ -383,6 +397,7 @@ async function start(): Promise<void> {
       focusWindow();
       mainWindow?.webContents.send(EVENTS.navigate, '#/today');
     },
+    !portableApp,
   );
 
   const target = installTarget();
@@ -449,6 +464,7 @@ async function start(): Promise<void> {
     },
     updateChecker,
     desktopStatus,
+    { app: portableApp, journalBesideApp },
   );
   registerIpc(createApi(journalHost, platform, appLock, backups), isTrustedUrl);
 

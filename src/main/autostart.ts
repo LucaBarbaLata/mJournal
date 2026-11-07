@@ -2,11 +2,12 @@
  * "Open mJournal when I sign in". It then starts with --hidden: in the tray when "Keep mJournal in the tray" is
  * on, otherwise minimized — either way ready for the evening reminder.
  *
- * - Windows: the usual Run entry (app.setLoginItemSettings), pointing at the installed mJournal.exe or at the
- *   portable .exe itself (PORTABLE_EXECUTABLE_FILE), never at its temporary unpacked copy.
+ * - Windows: the usual Run entry (app.setLoginItemSettings), pointing at the installed mJournal.exe.
  * - Linux: an XDG autostart file, $XDG_CONFIG_HOME/autostart/mjournal.desktop, pointing at the AppImage or at
  *   the installed program. It is written again at every start, in case the AppImage was moved.
- * - Development builds and other systems: not available.
+ * - Not available in development builds, on other systems, in the portable .exe, or when the journal is a
+ *   "mJournal Data" folder beside the app: a portable copy must not leave entries on the computers it visits,
+ *   and may live on a drive that isn't there at the next sign-in (index.ts decides).
  */
 import { app } from 'electron';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -20,7 +21,7 @@ export { HIDDEN_ARG };
 /** The program to start at sign-in, or null when this copy can't open at sign-in. */
 export function autostartExecutable(): string | null {
   if (!app.isPackaged) return null;
-  if (process.platform === 'win32') return process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+  if (process.platform === 'win32') return process.execPath;
   if (process.platform === 'linux') {
     const appImage = process.env.APPIMAGE;
     return appImage && isAbsolute(appImage) ? appImage : process.execPath;

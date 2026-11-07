@@ -704,3 +704,8 @@
   gap: 2px;
   color: var(--ink);
 }
+
+/* ---------- Portable copies ---------- */
+.portable-note {
+  margin-top: 16px;
+}

@@ -70,8 +70,18 @@ export function DataSettings() {
           <div>
             <h3>Not encrypted by mJournal</h3>
             <p className="muted">
-              Your journal is stored as ordinary files in your user folder. Anyone who can sign in to your computer account could
-              open them. To protect it, use a password on your account and turn on device encryption ({diskEncryptionHint(app.platform)}).
+              {app.journalBesideApp ? (
+                <>
+                  Your journal is stored as ordinary files in the mJournal Data folder next to mJournal. Anyone who has that
+                  drive could open them, so keep it somewhere safe — or use an encrypted drive.
+                </>
+              ) : (
+                <>
+                  Your journal is stored as ordinary files in your user folder. Anyone who can sign in to your computer account
+                  could open them. To protect it, use a password on your account and turn on device encryption (
+                  {diskEncryptionHint(app.platform)}).
+                </>
+              )}{' '}
               A PIN (Settings → PIN lock) keeps mJournal itself closed, but doesn’t encrypt the files. Backups are only
               encrypted when you set a password for them (Backup &amp; export) — otherwise keep them somewhere private.
             </p>
@@ -82,8 +92,9 @@ export function DataSettings() {
           <div>
             <h3>Gentle on your computer</h3>
             <p className="muted">
-              Nothing runs in the background when mJournal is closed — unless you choose to keep it in the tray. Its small
-              troubleshooting log never contains your journal’s content.
+              Nothing runs in the background when mJournal is closed
+              {app.journalBesideApp ? '' : ' — unless you choose to keep it in the tray'}. Its small troubleshooting log never
+              contains your journal’s content.
             </p>
           </div>
         </li>

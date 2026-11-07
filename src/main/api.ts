@@ -43,6 +43,9 @@ export interface Platform {
   appVersion: string;
   platformName: string;
   notificationsSupported: boolean;
+  /** See AppInfo.portableApp and AppInfo.journalBesideApp. */
+  portableApp: boolean;
+  journalBesideApp: boolean;
   chooseImages(): Promise<string[]>;
   chooseBackupFile(): Promise<string | null>;
   /** A folder picker (for automatic backups). */
@@ -185,6 +188,8 @@ export function createApi(
         platform: platform.platformName,
         dataDir: host.root,
         notificationsSupported: platform.notificationsSupported,
+        portableApp: platform.portableApp,
+        journalBesideApp: platform.journalBesideApp,
       }),
       desktopStatus: async () => platform.desktopStatus(),
     },

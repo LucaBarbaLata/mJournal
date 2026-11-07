@@ -653,6 +653,51 @@ test('keeps running in the tray when the window is closed, until it is quit', as
   run = null;
 });
 
+test('a portable copy with its journal beside it offers no tray, sign-in or reminders', async () => {
+  run = await launch(makeDataDir(), { portable: { app: true, dataBeside: true } });
+  dirs.push(run.dataDir);
+  const { page } = run;
+  const info = await callApi<{ dataDir: string; portableApp: boolean; journalBesideApp: boolean; notificationsSupported: boolean }>(
+    page,
+    'app',
+    'info',
+  );
+  expect(info).toMatchObject({ portableApp: true, journalBesideApp: true, notificationsSupported: false });
+  expect(info.dataDir).toBe(join(run.dataDir, 'mJournal Data'));
+  expect(existsSync(join(run.dataDir, 'mJournal Data', 'mjournal.db'))).toBe(true);
+  // Even when asked for (say, in settings from an installed copy), the tray stays away.
+  await callApi(page, 'settings', 'update', { keepInTray: true, openAtLogin: true });
+  expect(await callApi(page, 'app', 'desktopStatus')).toMatchObject({ canOpenAtLogin: false, canKeepInTray: false, trayShown: false });
+
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const background = page.locator('#settings-streaks');
+  await expect(background.getByRole('heading', { name: 'Evening reminder' })).toBeVisible();
+  await expect(background.getByRole('heading', { name: 'Keep mJournal in the tray' })).toHaveCount(0);
+  await expect(background.getByRole('heading', { name: 'Open mJournal when I sign in' })).toHaveCount(0);
+  await expect(background).toContainText('never left running when its drive is unplugged');
+  await expect(background).toContainText('The portable mJournal can’t show reminders');
+  await expect(background.getByRole('checkbox', { name: 'Evening reminder' })).toBeDisabled();
+  await expect(page.locator('#settings-updates')).toContainText('can’t replace itself');
+  await expect(page.locator('#settings-backup')).toContainText('only in the mJournal Data folder next to mJournal');
+  await expect(page.locator('#settings-data')).toContainText('Anyone who has that drive could open them');
+});
+
+test('the portable app alone keeps the tray, but doesn’t open at sign-in', async () => {
+  run = await launch(makeDataDir(), { portable: { app: true } });
+  dirs.push(run.dataDir);
+  const { page } = run;
+  expect(await callApi(page, 'app', 'info')).toMatchObject({ portableApp: true, journalBesideApp: false, notificationsSupported: false });
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const background = page.locator('#settings-streaks');
+  await expect(background.getByRole('heading', { name: 'Keep mJournal in the tray' })).toBeVisible();
+  await expect(background.getByRole('heading', { name: 'Open mJournal when I sign in' })).toHaveCount(0);
+  await expect(background).toContainText('The portable mJournal doesn’t start with your computer');
+  await expect(background.getByRole('checkbox', { name: 'Evening reminder' })).toBeDisabled();
+  await expect(page.locator('#settings-backup')).toContainText('Your journal lives only on this computer');
+  await background.getByRole('checkbox', { name: 'Keep mJournal in the tray' }).click();
+  await expect.poll(() => callApi<{ trayShown: boolean }>(page, 'app', 'desktopStatus').then((s) => s.trayShown)).toBe(true);
+});
+
 test('keeps a drawing as a photo of the day', async () => {
   run = await launch();
   dirs.push(run.dataDir);

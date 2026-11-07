@@ -11,13 +11,17 @@ export function electronPlatform(
   settingsChanged: (settings: Settings) => void,
   updates: Platform['updates'],
   desktopStatus: () => DesktopStatus,
+  portable: { app: boolean; journalBesideApp: boolean },
 ): Platform {
   // Look dialog functions up at call time (not destructured) so tests can stub them.
   const parent = () => getWindow() ?? undefined;
   return {
     appVersion: app.getVersion(),
     platformName: process.platform,
-    notificationsSupported: Notification.isSupported(),
+    // Windows only shows notifications from installed apps (a Start-menu shortcut carries the app's id).
+    notificationsSupported: Notification.isSupported() && !portable.app,
+    portableApp: portable.app,
+    journalBesideApp: portable.journalBesideApp,
 
     async chooseImages() {
       const options: Electron.OpenDialogOptions = {

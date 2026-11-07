@@ -81,7 +81,8 @@ Get the newest version from the **[Releases page](https://github.com/LucaBarbaLa
 - **`mJournal-Setup-<version>.exe`** — installs mJournal for your Windows user (no administrator rights needed) with a
   Start menu entry and a desktop shortcut. *Recommended for everyday use.*
 - **`mJournal-<version>-portable.exe`** — runs without installing. It starts a little more slowly because it unpacks
-  itself each time.
+  itself each time, and it leaves nothing behind on the computer: it doesn’t open when you sign in, can’t show the
+  evening reminder (Windows only shows notifications from installed apps) and can’t update itself.
 
 Then open mJournal from its desktop shortcut or the Start menu (or double-click the portable `.exe`).
 
@@ -167,7 +168,8 @@ Inside the journal folder:
 **Settings → Data & privacy** shows the exact path and has an *Open data folder* button.
 
 - **Portable mode:** create a folder named `mJournal Data` next to `mJournal-<version>-portable.exe` (or next to the
-  AppImage on Linux) and mJournal keeps everything inside it — handy for a USB stick.
+  AppImage on Linux) and mJournal keeps everything inside it — handy for a USB stick. mJournal then doesn’t stay in the
+  tray or open when you sign in, so it’s never left running when the stick is unplugged. Keep backups on another drive.
 - **Another location:** set the environment variable `MJOURNAL_DATA_DIR` to a folder before starting mJournal.
 - **Uninstalling never deletes your journal.**
 
@@ -254,7 +256,7 @@ Found a security problem? Please report it privately, as described in [SECURITY.
 | Automatic backups say the folder isn't available | The drive is unplugged or the folder was moved. Plug it in (mJournal tries again every hour) or choose another folder. |
 | A photo shows “Photo unavailable” | Its file is missing from `photos\` (Settings → Data & privacy counts these). Restoring a complete backup brings it back. |
 | iPhone photos (HEIC) are rejected | Save them as JPEG first — on the iPhone: *Settings → Camera → Formats → Most Compatible*; or open them in the Windows Photos app and *Save as* JPEG. |
-| The evening reminder doesn’t appear | It only works while mJournal is running — open, minimized or kept in the tray. *Settings → Reminder & background* can keep it in the tray and open it when you sign in. It stays quiet on days you’ve already written, and can be hidden by Windows *Do not disturb*. |
+| The evening reminder doesn’t appear | It only works while mJournal is running — open, minimized or kept in the tray. *Settings → Reminder & background* can keep it in the tray and open it when you sign in. It stays quiet on days you’ve already written, and can be hidden by Windows *Do not disturb*. The portable `.exe` can’t show it at all: use the installed mJournal. |
 | Linux: no tray icon | Your desktop needs a tray area. On GNOME, turn on the *AppIndicator* extension (Zorin OS and Ubuntu include it). Without one, closing the window still hides it: start mJournal again from the app menu to bring it back. |
 | The quick-note shortcut does nothing | Another app may already use it — *Settings → Reminder & background* says so; choose another one. Some Linux desktops (Wayland) don’t allow such shortcuts at all; *Quick note…* in the tray works either way. |
 | `Build mJournal.cmd` or `build-mjournal.sh` fails | Check your internet connection (it downloads from npm, nodejs.org and GitHub), delete the `node_modules` folder and run it again. |
@@ -353,12 +355,15 @@ scripts/       Icon rendering, third-party notices and the Node.js downloads use
 - Restoring a backup replaces the whole journal; there’s no merging of two journals.
 - One entry per day (with any number of prompts and photos).
 - HEIC/HEIF photos aren’t supported.
-- The evening reminder needs mJournal to be running (keep it in the tray and let it open at sign-in to be sure).
+- The evening reminder needs mJournal to be running (keep it in the tray and let it open at sign-in to be sure). The
+  portable `.exe` can’t show it.
 - Built and tested on Windows 11. Linux packages (64-bit Intel/AMD only) are new in 1.1; they are tested automatically on
   Ubuntu 24.04 and were tried by hand on Zorin OS. macOS packaging is configured but hasn’t been tested.
 - Spell checking isn’t available on Linux.
 - The app isn’t code-signed, so Windows shows a SmartScreen warning the first time.
-- The portable version can’t update itself: mJournal tells you about a new version, and you replace the file.
+- The portable version can’t update itself: mJournal tells you about a new version, and you replace the file. It
+  doesn’t open at sign-in either, and with a `mJournal Data` folder beside it (or beside the AppImage) mJournal doesn’t
+  stay in the tray.
 - The interface is in English.
 
 ## License

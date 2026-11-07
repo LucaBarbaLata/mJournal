@@ -209,10 +209,18 @@ from Monthly, Insights and — from 15 December to 31 January — a card on Toda
   PIN is set. A `quitting` flag (set by `before-quit`, the tray's Quit, the update installer's `quitForUpdate`, Windows
   `session-end` and `powerMonitor` `shutdown`) makes closing really close. Turning the tray off brings a hidden window
   back. Tray icons are `resources/tray-16.png` and `tray-32.png`, rendered by `npm run icons`.
-- **Sign-in** (`main/autostart.ts`): Windows uses `app.setLoginItemSettings` with the installed exe or the portable
-  file itself; Linux writes `$XDG_CONFIG_HOME/autostart/mjournal.desktop` (Exec quoted per the desktop-entry spec,
-  `main/desktopEntry.ts`), rewritten at every start while on. mJournal then starts with `--hidden`: in the tray, or
-  minimized without one. Not available in development builds.
+- **Sign-in** (`main/autostart.ts`): Windows uses `app.setLoginItemSettings` with the installed exe; Linux writes
+  `$XDG_CONFIG_HOME/autostart/mjournal.desktop` (Exec quoted per the desktop-entry spec, `main/desktopEntry.ts`),
+  rewritten at every start while on. mJournal then starts with `--hidden`: in the tray, or minimized without one. Not
+  available in development builds.
+- **Portable copies** (`index.ts`): `AppInfo.portableApp` is the portable `.exe` (its launcher sets
+  `PORTABLE_EXECUTABLE_FILE`); `AppInfo.journalBesideApp` means the journal is a `mJournal Data` folder next to the
+  portable `.exe` or the AppImage. Neither opens at sign-in (a Run entry or autostart file would stay behind on the
+  computer it visits), and with the journal beside the app the tray isn't shown either, so mJournal isn't left
+  running when that drive is unplugged. These are decided in the main process (`DesktopStatus.canOpenAtLogin` and
+  `canKeepInTray`), whatever the settings say; Settings hides the two switches and says why. The portable `.exe`
+  also reports `notificationsSupported: false` and `Reminder` never schedules there: Windows only shows toasts from
+  an app with a Start-menu shortcut carrying its AppUserModelID, which only the installer creates.
 - **Quick note**: the chosen accelerator is claimed with `globalShortcut` (`DesktopStatus.shortcut.registered` says
   whether that worked). It and the tray item show the window and send `quick-note`; the request is kept above the PIN
   lock (`renderer/lib/quickNote.ts`), so the box opens after unlocking. Saving flushes pending edits, then

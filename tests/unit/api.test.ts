@@ -31,7 +31,9 @@ function setup(overrides: Partial<Platform> = {}) {
     chooseImages: async () => [],
     chooseBackupFile: async () => null,
     chooseFolder: async () => null,
-    desktopStatus: () => ({ canOpenAtLogin: false, trayShown: false, shortcut: null }),
+    desktopStatus: () => ({ canOpenAtLogin: false, canKeepInTray: true, trayShown: false, shortcut: null }),
+    portableApp: false,
+    journalBesideApp: false,
     chooseSaveLocation: async () => null,
     showItemInFolder: (p) => revealed.push(p),
     openFolder: async () => undefined,
@@ -96,7 +98,8 @@ describe('API handlers', () => {
     const next = await api.settings.update({ keepInTray: true, openAtLogin: true, quickNoteShortcut: 'CommandOrControl+Alt+J' });
     expect(next).toMatchObject({ keepInTray: true, openAtLogin: true, quickNoteShortcut: 'CommandOrControl+Alt+J' });
     expect(changed.at(-1)?.quickNoteShortcut).toBe('CommandOrControl+Alt+J');
-    expect(await api.app.desktopStatus()).toEqual({ canOpenAtLogin: false, trayShown: false, shortcut: null });
+    expect(await api.app.desktopStatus()).toEqual({ canOpenAtLogin: false, canKeepInTray: true, trayShown: false, shortcut: null });
+    expect(await api.app.info()).toMatchObject({ portableApp: false, journalBesideApp: false });
   });
 
   it('keeps a deleted day in Recently removed and can bring it back', async () => {

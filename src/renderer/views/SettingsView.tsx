@@ -321,6 +321,9 @@ function StreakSettings() {
   const { info } = useApp();
   const desktop = useQuery('desktop-status', () => api.app.desktopStatus(), ['settings']);
   const linux = info.platform === 'linux';
+  // A portable copy doesn't open at sign-in; with the journal on a drive beside it, it doesn't stay in the tray either.
+  const offerTray = !info.journalBesideApp;
+  const offerSignIn = !info.portableApp && !info.journalBesideApp;
   return (
     <SettingsSection id="streaks" title="Streaks, reminder & background">
       <div className="setting-row">
@@ -337,10 +340,17 @@ function StreakSettings() {
         <div>
           <h3>Evening reminder</h3>
           <p className="muted">
-            This gentle reminder appears <strong>while mJournal is running</strong> — open, minimized, or kept in the tray
-            (below). It stays quiet on days you’ve already written.
+            This gentle reminder appears <strong>while mJournal is running</strong> —{' '}
+            {offerTray ? 'open, minimized, or kept in the tray (below)' : 'open or minimized'}. It stays quiet on days you’ve
+            already written.
           </p>
-          {!info.notificationsSupported && <p className="notice">Notifications aren’t available on this system.</p>}
+          {!info.notificationsSupported && (
+            <p className="notice">
+              {info.portableApp
+                ? 'The portable mJournal can’t show reminders: Windows only shows notifications from installed apps. Install mJournal with its Setup file to use them.'
+                : 'Notifications aren’t available on this system.'}
+            </p>
+          )}
         </div>
         <div className="reminder-controls">
           <label className="switch">
@@ -364,42 +374,56 @@ function StreakSettings() {
           </label>
         </div>
       </div>
-      <div className="setting-row">
-        <div>
-          <h3>Keep mJournal in the tray</h3>
-          <p className="muted">
-            Closing the window then only hides it: mJournal waits in the {linux ? 'panel' : 'notification area'}, ready for
-            the reminder and the quick note. With a PIN, it locks while hidden. <em>Quit mJournal</em> in the tray’s menu
-            really closes it.
-            {linux && ' Your desktop needs a tray area (on GNOME, the AppIndicator extension, which Zorin OS and Ubuntu include).'}
-          </p>
+      {offerTray && (
+        <div className="setting-row">
+          <div>
+            <h3>Keep mJournal in the tray</h3>
+            <p className="muted">
+              Closing the window then only hides it: mJournal waits in the {linux ? 'panel' : 'notification area'}, ready for
+              the reminder and the quick note. With a PIN, it locks while hidden. <em>Quit mJournal</em> in the tray’s menu
+              really closes it.
+              {linux && ' Your desktop needs a tray area (on GNOME, the AppIndicator extension, which Zorin OS and Ubuntu include).'}
+            </p>
+          </div>
+          <label className="switch">
+            <input type="checkbox" checked={settings.keepInTray} onChange={(event) => void set({ keepInTray: event.target.checked })} />
+            <span className="visually-hidden">Keep mJournal in the tray</span>
+          </label>
         </div>
-        <label className="switch">
-          <input type="checkbox" checked={settings.keepInTray} onChange={(event) => void set({ keepInTray: event.target.checked })} />
-          <span className="visually-hidden">Keep mJournal in the tray</span>
-        </label>
-      </div>
-      <div className="setting-row">
-        <div>
-          <h3>Open mJournal when I sign in</h3>
-          <p className="muted">
-            Starts mJournal in the background when you sign in to your computer — in the tray if it’s kept there, otherwise
-            minimized.
-          </p>
-          {desktop.data && !desktop.data.canOpenAtLogin && (
-            <p className="notice">This is available in the installed mJournal (and the AppImage).</p>
-          )}
+      )}
+      {offerSignIn && (
+        <div className="setting-row">
+          <div>
+            <h3>Open mJournal when I sign in</h3>
+            <p className="muted">
+              Starts mJournal in the background when you sign in to your computer — in the tray if it’s kept there, otherwise
+              minimized.
+            </p>
+            {desktop.data && !desktop.data.canOpenAtLogin && (
+              <p className="notice">This is available in the installed mJournal (and the AppImage).</p>
+            )}
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={settings.openAtLogin}
+              disabled={desktop.data ? !desktop.data.canOpenAtLogin : true}
+              onChange={(event) => void set({ openAtLogin: event.target.checked })}
+            />
+            <span className="visually-hidden">Open mJournal when I sign in</span>
+          </label>
         </div>
-        <label className="switch">
-          <input
-            type="checkbox"
-            checked={settings.openAtLogin}
-            disabled={desktop.data ? !desktop.data.canOpenAtLogin : true}
-            onChange={(event) => void set({ openAtLogin: event.target.checked })}
-          />
-          <span className="visually-hidden">Open mJournal when I sign in</span>
-        </label>
-      </div>
+      )}
+      {(info.portableApp || info.journalBesideApp) && (
+        <p className="notice info portable-note">
+          <Icon name="info" size={16} />
+          <span>
+            {info.journalBesideApp
+              ? 'This mJournal keeps your journal in the mJournal Data folder next to it, so it doesn’t stay in the tray or start with your computer: that way it’s never left running when its drive is unplugged.'
+              : 'The portable mJournal doesn’t start with your computer: it would leave an entry behind on each computer it runs on. The installed mJournal (from its Setup file) can.'}
+          </span>
+        </p>
+      )}
       <div className="setting-row">
         <div>
           <h3>Quick note shortcut</h3>
@@ -491,7 +515,7 @@ function describeUpdate(status: UpdateStatus, format: AppState['format']): strin
 
 function UpdateSettings() {
   const { settings, set, error } = useSetting();
-  const { format } = useApp();
+  const { format, info } = useApp();
   const [status, setStatus] = useUpdateStatus();
   const busy = status?.state === 'checking' || status?.state === 'downloading' || status?.state === 'installing';
   const checkNow = async () => {
@@ -512,8 +536,19 @@ function UpdateSettings() {
           <h3>Check for new versions</h3>
           <p className="muted">
             Each time it starts, and about once a day while it stays open, mJournal asks GitHub whether a newer version
-            is out. That’s the only thing it asks the internet by itself: nothing about you or your journal is sent, and
-            a new version is downloaded and installed only when you click <em>Update</em>.
+            is out. That’s the only thing it asks the internet by itself: nothing about you or your journal is sent,
+            {info.portableApp ? (
+              <>
+                {' '}
+                and nothing is downloaded. The portable mJournal can’t replace itself: <em>Get mJournal …</em> opens the new version on
+                GitHub, and you swap the old file for the new one.
+              </>
+            ) : (
+              <>
+                {' '}
+                and a new version is downloaded and installed only when you click <em>Update</em>.
+              </>
+            )}
           </p>
         </div>
         <label className="switch">

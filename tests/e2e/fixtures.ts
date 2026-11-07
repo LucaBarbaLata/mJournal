@@ -31,6 +31,12 @@ export interface LaunchOptions {
   env?: Record<string, string>;
   /** The journal has a PIN: wait for the lock screen instead of the app (and leave the guide alone). */
   locked?: boolean;
+  /**
+   * Run like a portable copy. app: like the portable .exe (its launcher sets PORTABLE_EXECUTABLE_FILE).
+   * dataBeside: the journal is a "mJournal Data" folder inside dataDir, found the way a portable copy finds it,
+   * instead of dataDir itself.
+   */
+  portable?: { app?: boolean; dataBeside?: boolean };
 }
 
 export async function launch(dataDir = makeDataDir(), options: LaunchOptions = {}): Promise<Launched> {
@@ -40,6 +46,15 @@ export async function launch(dataDir = makeDataDir(), options: LaunchOptions = {
     MJOURNAL_DATA_DIR: dataDir,
   };
   delete env.ELECTRON_RUN_AS_NODE;
+  delete env.PORTABLE_EXECUTABLE_FILE;
+  delete env.PORTABLE_EXECUTABLE_DIR;
+  delete env.APPIMAGE;
+  if (options.portable?.app) env.PORTABLE_EXECUTABLE_FILE = join(dataDir, 'mJournal-portable.exe');
+  if (options.portable?.dataBeside) {
+    mkdirSync(join(dataDir, 'mJournal Data'), { recursive: true });
+    env.PORTABLE_EXECUTABLE_DIR = dataDir;
+    delete env.MJOURNAL_DATA_DIR;
+  }
   const app = await electron.launch({ args: ['.'], cwd: ROOT, env });
   const page = await app.firstWindow();
   const errors: string[] = [];

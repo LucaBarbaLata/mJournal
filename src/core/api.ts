@@ -382,8 +382,10 @@ export interface Settings {
 
 /** What the desktop integration can do on this computer, and what is on. */
 export interface DesktopStatus {
-  /** Whether this copy can open at sign-in (not development builds, not other systems). */
+  /** Whether this copy can open at sign-in (not portable copies, development builds or other systems). */
   canOpenAtLogin: boolean;
+  /** Whether this copy may stay in the tray when closed (not when the journal is in a "mJournal Data" folder). */
+  canKeepInTray: boolean;
   /** Whether the tray icon is shown right now. */
   trayShown: boolean;
   /** The quick-note shortcut, and whether it could be claimed (another app may already use it). */
@@ -396,6 +398,16 @@ export interface AppInfo {
   platform: string;
   dataDir: string;
   notificationsSupported: boolean;
+  /**
+   * The portable mJournal .exe. It can't open at sign-in (that would leave a Run entry on the computer it
+   * visits), show reminders (Windows only shows notifications from installed apps) or install updates itself.
+   */
+  portableApp: boolean;
+  /**
+   * The journal is the "mJournal Data" folder next to the portable .exe or the AppImage — often on a USB drive.
+   * Then mJournal doesn't stay in the tray or open at sign-in, so it isn't running when that drive is unplugged.
+   */
+  journalBesideApp: boolean;
 }
 
 export interface DataInfo {
