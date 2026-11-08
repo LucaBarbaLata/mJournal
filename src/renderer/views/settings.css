@@ -709,3 +709,23 @@
 .portable-note {
   margin-top: 16px;
 }
+
+/* ---------- Trackers ---------- */
+.tracker-add {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.tracker-add .input {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+.tracker-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+}
+.tracker-suggestions .tag-chip .muted {
+  font-weight: 600;
+}

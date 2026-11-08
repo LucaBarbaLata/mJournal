@@ -210,6 +210,13 @@
   font-weight: 800;
   text-align: right;
 }
+/* Trackers say "Yes on 12 of 18 days": the number column takes the room it needs. */
+.tracker-bars li {
+  grid-template-columns: minmax(0, 170px) minmax(48px, 1fr) auto;
+}
+.tracker-bars .mood-bars-count {
+  white-space: nowrap;
+}
 
 /* ---------- Photos & moments ---------- */
 .month-section {

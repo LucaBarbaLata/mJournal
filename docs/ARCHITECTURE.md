@@ -62,13 +62,13 @@ those channels; `main/api.ts` implements them, treating every argument as `unkno
 `core/validation.ts`. Errors that are safe to show are `UserFacingError`s; anything else is logged (the error only,
 never the arguments) and reported as a generic message.
 
-## Data model (schema version 2)
+## Data model (schema version 3)
 
 All tables are SQLite `STRICT` tables. The schema version is `PRAGMA user_version`.
 
 | Table | Purpose |
 | --- | --- |
-| `entries` | One row per calendar day (`date` = `YYYY-MM-DD`): free writing, mood key, mood note, energy 1–5, favorite. Derived columns (`word_count`, `has_text`, `answer_count`, `photo_count`, `favorite_moments`, `tag_count`) are refreshed in the same transaction as every change; `has_content` is a generated column and is the single definition of “this day counts” (writing, a mood, energy, a photo or a tag). |
+| `entries` | One row per calendar day (`date` = `YYYY-MM-DD`): free writing, mood key, mood note, energy 1–5, favorite. Derived columns (`word_count`, `has_text`, `answer_count`, `photo_count`, `favorite_moments`, `tag_count`, `tracker_count`) are refreshed in the same transaction as every change; `has_content` is a generated column and is the single definition of “this day counts” (writing, a mood, energy, a photo, a tag or a tracker's answer). |
 | `answers` | Prompt answers per day, with a copy of the question’s wording (`prompt_text`) so edits to custom prompts never change old answers. |
 | `photos` | Photo rows: day, content hash, stored file, caption, order, favorite, thumbnail flag, `removed_at` for “Recently removed”. No foreign key to `entries`, so deleting a day keeps its photos recoverable. |
 | `daily_prompts` | The featured question shown for each date (saved on first view), with shuffle count and “skipped”. |
@@ -81,6 +81,8 @@ All tables are SQLite `STRICT` tables. The schema version is `PRAGMA user_versio
 | `entry_tags` | Tags on days: `picked` (tapped as a chip) and/or `written` (`#tag` in the day’s writing, answers, mood note or captions). `refresh()` keeps `written` in step with the text, drops rows that are neither, and removes tags that are neither quick chips nor used. |
 | `removed_days` | Days deleted with *Delete entry*: their fields, answers and picked tags as versioned JSON, plus the photos that went to Recently removed with them (`store/removedDays.ts`). |
 | `pinned_prompts` | Up to three prompts asked every day, with a weekday bitmask (bit 0 = Sunday). |
+| `trackers` | Things answered each day: label, `kind` (`check`: 0 = no, 1 = yes; `scale`: 1–5), order, `archived` (“put away”). One with answers is never deleted and can't change its kind (`store/trackers.ts`); at most 8 are active. |
+| `tracker_values` | A tracker's answer on a day (`entry_date`, `tracker_id`, `value`); deleted with its day (`ON DELETE CASCADE`), which keeps them in Recently removed first. |
 | `capsules` | Letters to a future day: `open_on`, `written_on`, body, `opened_at`. Editable only on `written_on`; the body isn’t sent to the interface while sealed (`store/capsules.ts`, using the main process’s own date). |
 | `writing_index` | FTS5 table for writing that isn’t part of a day: `kind` (`month`, `year`, `capsule`), `ref`, `text`. Sealed letters are never in it. |
 | `settings` | JSON values per key, re-validated on read (malformed values fall back to defaults). Keys starting with `internal.` hold things like the window size. |
@@ -107,6 +109,11 @@ which SQLite can't alter, so the migration drops it and adds it again with the n
 refers to it, so no table is rebuilt (and no foreign-key cascade runs). After any migration, and after every restore,
 `Journal.refreshDerived()` recalculates every day (picking up `#tags` already in old writing) and rebuilds both search
 indexes.
+
+Version 3 (mJournal 1.3) adds `trackers` and `tracker_values`, and `entries.tracker_count`; `has_content` is dropped and
+added again the same way, so a tracker's answer on its own makes a day count. Days in `removed_days` written by 1.2
+(`"v": 1`) have no trackers; 1.3 writes `"v": 2` with the day's tracker answers, which come back only for trackers
+that still exist and only where the day has no newer answer.
 
 ## Important flows
 

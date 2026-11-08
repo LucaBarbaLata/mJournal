@@ -2,7 +2,7 @@
  * Data loading for views. useQuery fetches through the API and refetches
  * whenever one of its tags is invalidated after a change elsewhere.
  *
- * Tags: 'entries' (any day content), 'photos', 'prompts', 'moods',
+ * Tags: 'entries' (any day content), 'photos', 'prompts', 'moods', 'trackers',
  * 'settings', 'reflections', 'data' (backups, storage info).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';

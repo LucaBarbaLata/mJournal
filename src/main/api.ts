@@ -11,6 +11,7 @@ import { isMoodColor, isMoodIcon, MAX_MOOD_LABEL_LENGTH, type MoodColor, type Mo
 import { MAX_GALLERY_LIMIT } from '@core/photos';
 import { MAX_INTENTION_LENGTH, MAX_PROMPT_LENGTH, MONTHLY_INTENTION_KEY, MONTHLY_KEYS, YEARLY_KEYS } from '@core/prompts';
 import { MAX_TAG_LENGTH } from '@core/tags';
+import { MAX_TRACKER_LABEL_LENGTH, SCALE_MAX, TRACKER_KINDS } from '@core/trackers';
 import { MAX_TEXT_LENGTH } from '@core/text';
 import {
   expectArray,
@@ -203,6 +204,7 @@ export function createApi(
           answers: j().entries.answers(d),
           photos: j().photos.forDay(d),
           tags: j().entries.tags(d),
+          trackers: j().trackers.forDay(d),
         };
       },
       update: async (date, patch) => {
@@ -275,6 +277,34 @@ export function createApi(
       },
       reorder: async (names) => j().tags.reorder(expectArray(names, 1000, 'tags').map((n) => expectTagText(n))),
       remove: async (name) => j().tags.remove(expectTagText(name)),
+    },
+
+    trackers: {
+      list: async () => j().trackers.list(),
+      create: async (input) => {
+        const o = expectObject(input, 'tracker');
+        return j().trackers.create({
+          label: expectNonEmptyText(o.label, 'a name for the tracker', MAX_TRACKER_LABEL_LENGTH * 2),
+          kind: expectOneOf(o.kind, TRACKER_KINDS, 'kind of tracker'),
+        });
+      },
+      update: async (id, patch) => {
+        const o = expectObject(patch, 'changes');
+        return j().trackers.update(recordId(id, 'tracker'), {
+          label: o.label === undefined ? undefined : expectNonEmptyText(o.label, 'a name for the tracker', MAX_TRACKER_LABEL_LENGTH * 2),
+          kind: o.kind === undefined ? undefined : expectOneOf(o.kind, TRACKER_KINDS, 'kind of tracker'),
+          archived: o.archived === undefined ? undefined : expectBoolean(o.archived),
+        });
+      },
+      reorder: async (ids) => j().trackers.reorder(expectArray(ids, 100, 'trackers').map((id) => recordId(id, 'tracker'))),
+      remove: async (id) => j().trackers.remove(recordId(id, 'tracker')),
+      // The store checks that the answer fits the tracker's kind.
+      setForDay: async (date, id, value) =>
+        j().trackers.setForDay(
+          writableDate(date),
+          recordId(id, 'tracker'),
+          value === null ? null : expectInteger(value, 0, SCALE_MAX, 'answer'),
+        ),
     },
 
     moods: {

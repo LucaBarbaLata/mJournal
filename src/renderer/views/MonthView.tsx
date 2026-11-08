@@ -10,7 +10,7 @@ import { energyLabel } from '@core/moods';
 import { MAX_INTENTION_LENGTH, MONTHLY_INTENTION_KEY, MONTHLY_LETTER_KEY, MONTHLY_QUESTIONS } from '@core/prompts';
 import { parseSearch, type ParsedSearch } from '@core/search';
 import { AutoTextarea } from '../components/AutoTextarea';
-import { MonthRibbon, MoodBars } from '../components/Charts';
+import { MonthRibbon, MoodBars, TrackerBars } from '../components/Charts';
 import { CountUp } from '../components/CountUp';
 import { Flower, LetterArt, Sprig } from '../components/Decorations';
 import { Icon } from '../components/Icon';
@@ -187,6 +187,13 @@ function MonthContent({ recap, onChanged, highlight }: { recap: MonthRecap; onCh
           <>
             <h3 className="sub-title">Moods this month</h3>
             <MoodBars counts={recap.moodCounts} moodFor={(k) => moodFor(k)} />
+          </>
+        )}
+
+        {recap.trackers.length > 0 && (
+          <>
+            <h3 className="sub-title">Trackers</h3>
+            <TrackerBars trackers={recap.trackers} />
           </>
         )}
       </section>

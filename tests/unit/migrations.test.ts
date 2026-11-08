@@ -78,7 +78,7 @@ describe('migrations', () => {
     db.close();
   });
 
-  it('upgrades a 1.1 journal (version 1) to version 2 with every day still counted', () => {
+  it('upgrades a 1.1 journal (version 1) to the latest version with every day still counted', () => {
     const dir = tempDir();
     // A version 1 journal, written the way mJournal 1.1 did.
     const db = Db.open(join(dir, 'mjournal.db'));
@@ -106,7 +106,7 @@ describe('migrations', () => {
     db.close();
 
     const journal = Journal.open(dir, { clock: fakeClock('2026-10-01T12:00:00Z') });
-    expect(journal.db.userVersion).toBe(2);
+    expect(journal.db.userVersion).toBe(LATEST_SCHEMA_VERSION);
     expect(journal.migration.snapshotPath && existsSync(journal.migration.snapshotPath)).toBe(true);
     expect(journal.entries.contentDays()).toEqual(['2026-09-01', '2026-09-02', '2026-09-03']);
     expect(journal.entries.answers('2026-09-02').map((a) => a.answer)).toEqual(['Tea #reading']);

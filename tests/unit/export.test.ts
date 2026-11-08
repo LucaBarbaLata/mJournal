@@ -59,7 +59,7 @@ describe('CSV export', () => {
     const csv = buildCsv(journal);
     expect(csv.startsWith('﻿date,weekday,mood,')).toBe(true);
     const lines = csv.slice(1).split('\r\n');
-    expect(lines[0].split(',')).toHaveLength(12);
+    expect(lines[0].split(',')).toHaveLength(13);
     expect(lines[1].startsWith('"2026-10-23","Friday","Calm","2","Low","no","6","0","",')).toBe(true);
     expect(csv).toContain('"Wrote, with ""quotes""\nand two lines"');
     expect(csv).toContain('"What was one moment I genuinely enjoyed today? Lunch"');

@@ -219,6 +219,37 @@ CREATE VIRTUAL TABLE writing_index USING fts5 (
 );
 `;
 
+/**
+ * Version 3 (mJournal 1.3): trackers — small things answered each day with yes or no, or on a 1–5 scale. An
+ * answer on its own makes a day count, like a mood or a tag, so `has_content` is dropped and added again.
+ */
+const SCHEMA_V3 = `
+ALTER TABLE entries ADD COLUMN tracker_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE entries DROP COLUMN has_content;
+ALTER TABLE entries ADD COLUMN has_content INTEGER GENERATED ALWAYS AS
+  (has_text OR mood IS NOT NULL OR energy IS NOT NULL OR photo_count > 0 OR tag_count > 0 OR tracker_count > 0) VIRTUAL;
+
+-- kind: 'check' (0 = no, 1 = yes) or 'scale' (1–5). Trackers with answers are put away (archived), not deleted.
+CREATE TABLE trackers (
+  id         INTEGER PRIMARY KEY,
+  label      TEXT NOT NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('check', 'scale')),
+  position   INTEGER NOT NULL DEFAULT 0,
+  archived   INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE tracker_values (
+  entry_date TEXT NOT NULL REFERENCES entries (date) ON DELETE CASCADE,
+  tracker_id INTEGER NOT NULL REFERENCES trackers (id),
+  value      INTEGER NOT NULL CHECK (value BETWEEN 0 AND 5),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (entry_date, tracker_id)
+) STRICT;
+CREATE INDEX tracker_values_by_tracker ON tracker_values (tracker_id, entry_date);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
@@ -245,6 +276,13 @@ export const MIGRATIONS: readonly Migration[] = [
           [tagKey(label), label, position, now, now],
         );
       });
+    },
+  },
+  {
+    version: 3,
+    description: 'Trackers',
+    up(db) {
+      db.exec(SCHEMA_V3);
     },
   },
 ];

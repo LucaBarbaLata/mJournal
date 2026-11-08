@@ -10,6 +10,7 @@ import type { Db } from './database';
 import type { EntriesStore } from './entries';
 import { pickMoments } from './moments';
 import type { PhotoStore } from './photos';
+import type { TrackerStore } from './trackers';
 import type { WritingIndex } from './writingIndex';
 
 export { LONGEST_ENTRY_MIN_WORDS, PHOTO_DAY_MIN_PHOTOS } from './moments';
@@ -22,6 +23,7 @@ export class ReflectionStore {
     private readonly entries: EntriesStore,
     private readonly photos: PhotoStore,
     private readonly writing: WritingIndex,
+    private readonly trackers: TrackerStore,
   ) {}
 
   reflection(month: MonthKey): { answers: Record<string, string>; updatedAt: string | null } {
@@ -91,6 +93,7 @@ export class ReflectionStore {
       days,
       photos: this.photos.inRange(firstDayOfMonth(month), lastDayOfMonth(month)),
       moments: pickMoments(this.db, days, firstDayOfMonth(month), lastDayOfMonth(month), { max: MAX_MOMENTS, period: 'month' }),
+      trackers: this.trackers.summaries(firstDayOfMonth(month), lastDayOfMonth(month)),
       reflection: answers,
       reflectionUpdatedAt: updatedAt,
     };

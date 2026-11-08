@@ -318,3 +318,17 @@
   justify-self: start;
   margin-top: 8px;
 }
+
+/* ---------- Trackers ---------- */
+.tracker-history-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+}
+.tracker-history-head .sub-title {
+  margin: 0;
+}
+.tracker-history-head .spacer {
+  flex: 1;
+}

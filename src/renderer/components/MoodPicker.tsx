@@ -5,7 +5,8 @@ import { ENERGY_LEVELS } from '@core/moods';
 import { burst } from '../lib/motion';
 import { MoodIcon } from './MoodIcon';
 
-function rovingKeys(event: KeyboardEvent<HTMLElement>, count: number, index: number, select: (i: number) => void) {
+/** Arrow keys, Home and End move the choice in a radio group (one Tab stop). */
+export function rovingKeys(event: KeyboardEvent<HTMLElement>, count: number, index: number, select: (i: number) => void) {
   const forward = ['ArrowRight', 'ArrowDown'];
   const backward = ['ArrowLeft', 'ArrowUp'];
   let next = -1;

@@ -1,4 +1,4 @@
-/** Settings: personal touches, appearance, moods, prompts, backups and privacy. */
+/** Settings: personal touches, appearance, moods, tags, trackers, prompts, backups and privacy. */
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   QUICK_NOTE_SHORTCUTS,
@@ -28,6 +28,7 @@ import { MoodSettings } from './settings/MoodSettings';
 import { PinSettings } from './settings/PinSettings';
 import { PromptSettings } from './settings/PromptSettings';
 import { TagSettings } from './settings/TagSettings';
+import { TrackerSettings } from './settings/TrackerSettings';
 import './settings.css';
 
 const SECTIONS: { id: string; label: string; icon: IconName }[] = [
@@ -36,6 +37,7 @@ const SECTIONS: { id: string; label: string; icon: IconName }[] = [
   { id: 'dates', label: 'Dates & calendar', icon: 'calendar' },
   { id: 'moods', label: 'Moods', icon: 'heart' },
   { id: 'tags', label: 'Tags', icon: 'tag' },
+  { id: 'trackers', label: 'Trackers', icon: 'check' },
   { id: 'prompts', label: 'Prompts', icon: 'quote' },
   { id: 'streaks', label: 'Reminder & background', icon: 'bell' },
   { id: 'pin', label: 'PIN lock', icon: 'lock' },
@@ -89,6 +91,7 @@ export function SettingsView({ section }: { section: string | null }) {
           <DateSettings />
           <MoodSettings />
           <TagSettings />
+          <TrackerSettings />
           <PromptSettings />
           <StreakSettings />
           <PinSettings />

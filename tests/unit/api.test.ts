@@ -91,6 +91,21 @@ describe('API handlers', () => {
     await expect(api.entries.appendToBody('2026-10-24', '   ')).rejects.toThrow(/Please enter a note/);
     await expect(api.years.recap(99)).rejects.toThrow(/year/);
     await expect(api.years.saveReflection(2026, 'nope', 'x')).rejects.toThrow(/question/);
+    await expect(api.trackers.create({ label: 'Sleep', kind: 'stars' })).rejects.toThrow(/kind of tracker/);
+    await expect(api.trackers.create({ label: '', kind: 'check' })).rejects.toThrow(/name for the tracker/);
+    await expect(api.trackers.update(0, { label: 'x' })).rejects.toThrow(/tracker/);
+    await expect(api.trackers.reorder(['1'])).rejects.toThrow(/tracker/);
+    await expect(api.trackers.setForDay('2026-10-30', 1, 1)).rejects.toThrow(/hasn't happened yet/);
+    await expect(api.trackers.setForDay('2026-10-24', 1, 6)).rejects.toThrow(/answer/);
+    await expect(api.trackers.setForDay('2026-10-24', 1, '1')).rejects.toThrow(/answer/);
+  });
+
+  it('answers trackers and returns them with the day', async () => {
+    const { api } = setup();
+    const outside = await api.trackers.create({ label: 'Went outside', kind: 'check' });
+    expect(await api.trackers.setForDay('2026-10-24', outside.id, 1)).toEqual([{ trackerId: outside.id, value: 1 }]);
+    expect((await api.entries.getDay('2026-10-24')).trackers).toEqual([{ trackerId: outside.id, value: 1 }]);
+    expect(await api.trackers.setForDay('2026-10-24', outside.id, null)).toEqual([]);
   });
 
   it('turns on the tray, opening at sign-in and the quick-note shortcut', async () => {

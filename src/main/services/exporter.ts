@@ -6,6 +6,7 @@
 import { weekdayName } from '@core/dates';
 import { energyLabel } from '@core/moods';
 import { MONTHLY_INTENTION_KEY, MONTHLY_QUESTIONS, MONTHLY_LETTER_KEY, YEARLY_LETTER_KEY, YEARLY_QUESTIONS } from '@core/prompts';
+import { trackerValueLabel, type TrackerKind } from '@core/trackers';
 import type { Journal } from '../journal';
 
 export const EXPORT_KIND = 'mjournal-export';
@@ -48,6 +49,12 @@ export function buildJsonExport(journal: Journal, appVersion: string) {
   };
   const answersByDay = group(answers);
   const photosByDay = group(photos);
+  const trackersByDay = group(
+    journal.db.all<{ entry_date: string; label: string; kind: TrackerKind; value: number }>(
+      `SELECT v.entry_date, t.label, t.kind, v.value FROM tracker_values v JOIN trackers t ON t.id = v.tracker_id
+       ORDER BY v.entry_date, t.archived, t.position, t.id`,
+    ),
+  );
   const tagsByDay = group(
     journal.db.all<{ entry_date: string; label: string; picked: number; written: number }>(
       `SELECT et.entry_date, t.label, et.picked, et.written FROM entry_tags et JOIN tags t ON t.name = et.tag
@@ -93,6 +100,12 @@ export function buildJsonExport(journal: Journal, appVersion: string) {
         favorite: a.favorite === 1,
       })),
       tags: (tagsByDay.get(row.date) ?? []).map((t) => t.label),
+      trackers: (trackersByDay.get(row.date) ?? []).map((t) => ({
+        tracker: t.label,
+        kind: t.kind,
+        value: t.value,
+        valueLabel: trackerValueLabel(t.kind, t.value),
+      })),
       photos: (photosByDay.get(row.date) ?? []).map((p) => ({
         file: `photos/${p.file}`,
         originalName: p.original_name,
@@ -125,6 +138,7 @@ export function buildJsonExport(journal: Journal, appVersion: string) {
       )
       .map((c) => ({ opensOn: c.open_on, writtenOn: c.written_on, letter: c.body, openedAt: c.opened_at })),
     tags: journal.tags.list().map((t) => ({ label: t.label, quickChip: t.quick, days: t.days })),
+    trackers: journal.trackers.list().map((t) => ({ label: t.label, kind: t.kind, putAway: t.archived, days: t.days })),
     moods: moods.map((m) => ({ key: m.key, label: m.label, icon: m.icon, color: m.color, hidden: m.hidden, builtIn: m.builtIn })),
     customPrompts: journal.prompts
       .library()
@@ -158,6 +172,7 @@ export const CSV_COLUMNS = [
   'writing',
   'prompt_answers',
   'tags',
+  'trackers',
 ] as const;
 
 export function buildCsv(journal: Journal): string {
@@ -178,6 +193,7 @@ export function buildCsv(journal: Journal): string {
         entry.body,
         entry.answers.map((a) => `${a.question} ${a.answer}`).join('\n\n'),
         entry.tags.join(', '),
+        entry.trackers.map((t) => `${t.tracker}: ${t.valueLabel.toLowerCase()}`).join('; '),
       ]
         .map(csvCell)
         .join(','),

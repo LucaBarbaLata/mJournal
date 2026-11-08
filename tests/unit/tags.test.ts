@@ -101,7 +101,7 @@ describe('tags on days', () => {
     expect(json.entries[0].tags).toEqual(['cooking', 'Family']);
     expect(json.tags.some((t) => t.label === 'Family' && t.days === 1)).toBe(true);
     const [header, row] = buildCsv(j).split('\r\n');
-    expect(header.endsWith(',tags')).toBe(true);
-    expect(row.endsWith('"cooking, Family"')).toBe(true);
+    expect(header.endsWith(',tags,trackers')).toBe(true);
+    expect(row.endsWith('"cooking, Family",""')).toBe(true);
   });
 });

@@ -466,6 +466,55 @@ test('tags a day with a chip or a #word, and finds it by tag', async () => {
   await expect(page.locator('.result')).toContainText('Walk');
 });
 
+test('tracks small things each day, keeps them after a restart and shows them in Insights', async () => {
+  const dataDir = makeDataDir();
+  dirs.push(dataDir);
+  run = await launch(dataDir);
+  let { page } = run;
+  await page.getByRole('link', { name: 'Settings' }).click();
+  const section = page.locator('#settings-trackers');
+  await section.getByRole('textbox', { name: 'New tracker' }).fill('Went outside');
+  await section.getByRole('button', { name: 'Add', exact: true }).click();
+  await section.getByRole('radio', { name: '1 to 5' }).click();
+  await section.getByRole('textbox', { name: 'New tracker' }).fill('Sleep');
+  await section.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(section.locator('.tracker-settings li')).toHaveCount(2);
+  await expect(section.locator('.tracker-settings li').nth(1)).toContainText('1 to 5');
+
+  await page.getByRole('link', { name: 'Today' }).click();
+  const outside = page.getByRole('radiogroup', { name: 'Went outside' });
+  const sleep = page.getByRole('radiogroup', { name: 'Sleep' });
+  await outside.getByRole('radio', { name: 'Yes' }).click();
+  await sleep.getByRole('radio', { name: '4 of 5' }).click();
+  await expect(outside.getByRole('radio', { name: 'Yes' })).toHaveAttribute('aria-checked', 'true');
+  await saved(page);
+  // A tracker on its own is enough for the day: it can be deleted like any saved day.
+  await expect(page.getByRole('button', { name: 'Delete entry' })).toBeVisible();
+
+  await closeLikeUser(run.app);
+  run = await launch(dataDir);
+  page = run.page;
+  await expect(page.getByRole('radiogroup', { name: 'Went outside' }).getByRole('radio', { name: 'Yes' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('radiogroup', { name: 'Sleep' }).getByRole('radio', { name: '4 of 5' })).toHaveAttribute('aria-checked', 'true');
+
+  await page.getByRole('link', { name: 'Insights' }).click();
+  const card = page.locator('section[aria-labelledby="tracker-summary"]');
+  await expect(card).toContainText('Yes on 1 of 1 day');
+  await expect(card).toContainText('Average 4 · 1 day');
+  await card.getByRole('combobox', { name: 'Tracker' }).selectOption({ label: 'Sleep' });
+  await expect(card).toContainText('the average of your answers');
+
+  // Put away: gone from new days, still on the day that has an answer.
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.locator('#settings-trackers').getByRole('button', { name: 'Put away' }).first().click();
+  await expect(page.locator('#settings-trackers')).toContainText('Their answers are kept');
+  await page.getByRole('link', { name: 'Today' }).click();
+  await expect(page.getByRole('radiogroup', { name: 'Went outside · put away' })).toBeVisible();
+  await page.getByRole('link', { name: 'Previous day' }).click();
+  await expect(page.getByRole('radiogroup', { name: 'Went outside' })).toHaveCount(0);
+  await expect(page.getByRole('radiogroup', { name: 'Sleep' })).toBeVisible();
+});
+
 test('deletes a day and brings it back with Undo or from Recently removed', async () => {
   run = await launch();
   dirs.push(run.dataDir);

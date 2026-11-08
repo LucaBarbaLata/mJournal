@@ -4,6 +4,7 @@ import type {
   AnswerRecord,
   DayData,
   DayTag,
+  DayTrackerValue,
   EntryPatch,
   FeaturedPrompt,
   ImportResult,
@@ -43,6 +44,7 @@ import { ensureThumbnails } from '../lib/thumbnails';
 import { useNow, useToday } from '../lib/time';
 import { FutureLetterDialog, FutureLetters, OpenedLetters } from './day/Letters';
 import { TagPicker } from './day/TagPicker';
+import { TrackerPicker } from './day/TrackerPicker';
 import { PromptPicker } from './PromptPicker';
 import './day.css';
 
@@ -255,6 +257,7 @@ function DayEditor({
   /** The prompts asked on this very day (today's page, today's weekday). */
   const pinnedTodayIds = new Set(pinnedToday(pins).map((p) => p.promptId));
   const [dayTags, setDayTags] = useState<DayTag[]>(initial.tags);
+  const [trackerValues, setTrackerValues] = useState<DayTrackerValue[]>(initial.trackers);
   const [futureLetter, setFutureLetter] = useState(false);
   const [drawing, setDrawing] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -557,7 +560,7 @@ function DayEditor({
   const deleteDay = async () => {
     const ok = await confirm({
       title: 'Delete this day’s entry?',
-      body: `Your writing, mood, energy, answers, tags and photos for ${format.long(date)} move to “Recently removed” in Settings, where you can restore them.`,
+      body: `Your writing, mood, energy, answers, tags, trackers and photos for ${format.long(date)} move to “Recently removed” in Settings, where you can restore them.`,
       confirmLabel: 'Delete entry',
       tone: 'danger',
     });
@@ -595,6 +598,7 @@ function DayEditor({
       energy ||
       photos.length > 0 ||
       dayTags.length > 0 ||
+      trackerValues.length > 0 ||
       [...answers.values()].some((a) => a.text.trim()),
   );
   // #tags follow the writing, so the chips are reloaded after saves.
@@ -643,6 +647,7 @@ function DayEditor({
             <strong>Alt + ← / →</strong> moves between days.
           </Tip>
         )}
+        {date === today && <TrackersTip />}
         {error && (
           <p className="notice error" role="alert">
             <Icon name="info" size={16} />
@@ -898,6 +903,7 @@ function DayEditor({
             }}
           />
         </div>
+        <TrackerPicker date={date} values={trackerValues} onChange={setTrackerValues} />
         <TagPicker date={date} tags={dayTags} onChange={setDayTags} />
       </section>
 
@@ -1025,6 +1031,19 @@ function DayEditor({
         />
       )}
     </div>
+  );
+}
+
+/** Once the first tip is put away, and only while no tracker is set up: where trackers live. */
+function TrackersTip() {
+  const { settings } = useApp();
+  const trackers = useQuery('trackers', () => api.trackers.list(), ['trackers']);
+  if (!settings.dismissedTips.includes('today') || !trackers.data || trackers.data.length > 0) return null;
+  return (
+    <Tip id="trackers" icon="check">
+      <strong>New:</strong> keep an eye on small things — a walk, your medicine, how you slept — with{' '}
+      <a href={href.settings('trackers')}>trackers</a>. Each one is a quick yes or no, or a 1 to 5, next to your mood.
+    </Tip>
   );
 }
 

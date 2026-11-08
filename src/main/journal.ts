@@ -17,6 +17,7 @@ import { SearchStore } from './store/search';
 import { defaultSettings, SettingsStore } from './store/settings';
 import { StatsStore } from './store/stats';
 import { TagStore } from './store/tags';
+import { TrackerStore } from './store/trackers';
 import { WritingIndex } from './store/writingIndex';
 import { YearStore } from './store/years';
 import { dataPaths, type DataPaths } from './paths';
@@ -37,6 +38,7 @@ export class Journal {
   readonly photos: PhotoStore;
   readonly reflections: ReflectionStore;
   readonly tags: TagStore;
+  readonly trackers: TrackerStore;
   readonly removedDays: RemovedDaysStore;
   readonly capsules: CapsuleStore;
   readonly writing: WritingIndex;
@@ -55,16 +57,17 @@ export class Journal {
     const now = () => clock().toISOString();
     this.moods = new MoodStore(db, now);
     this.entries = new EntriesStore(db, now, (key) => this.moods.exists(key));
+    this.trackers = new TrackerStore(db, now, this.entries);
     this.prompts = new PromptStore(db, now);
     this.photos = new PhotoStore(db, now, new PhotoFiles(paths.photos, paths.thumbnails), this.entries);
     this.writing = new WritingIndex(db);
-    this.reflections = new ReflectionStore(db, now, this.entries, this.photos, this.writing);
+    this.reflections = new ReflectionStore(db, now, this.entries, this.photos, this.writing, this.trackers);
     this.tags = new TagStore(db, now, this.entries);
-    this.removedDays = new RemovedDaysStore(db, now, this.entries, this.photos, this.tags);
+    this.removedDays = new RemovedDaysStore(db, now, this.entries, this.photos, this.tags, this.trackers);
     this.capsules = new CapsuleStore(db, clock, this.writing);
     this.years = new YearStore(db, now, this.entries, this.photos, this.writing);
     this.search = new SearchStore(db);
-    this.stats = new StatsStore(db, this.entries);
+    this.stats = new StatsStore(db, this.entries, this.trackers);
     this.settings = new SettingsStore(db, now, defaultSettings(regionCode));
   }
 

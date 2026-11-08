@@ -1,6 +1,6 @@
 /**
  * Days deleted with "Delete entry" wait in Recently removed, like photos do, until they are restored or deleted
- * for good. A removed day keeps its writing, mood, energy, answers and picked tags (as versioned JSON) and the
+ * for good. A removed day keeps its writing, mood, energy, answers, picked tags and tracker answers (as versioned JSON) and the
  * photos that went to Recently removed with it.
  *
  * Restoring never overwrites anything: if the day got new writing in the meantime, empty fields are filled,
@@ -14,12 +14,16 @@ import type { Db } from './database';
 import type { EntriesStore, EntryRow } from './entries';
 import type { PhotoStore } from './photos';
 import type { TagStore } from './tags';
+import type { TrackerStore } from './trackers';
 
+/** Version 1 (mJournal 1.2) had no trackers; version 2 adds them. */
 interface SavedDay {
-  v: 1;
+  v: 1 | 2;
   entry: { body: string; mood: string | null; moodNote: string; energy: number | null; favorite: boolean; createdAt: string } | null;
   answers: { promptId: string; promptText: string; answer: string; favorite: boolean }[];
   tags: string[];
+  /** The tracker's id and label (the label only for reading), and the answer. */
+  trackers?: { id: number; label: string; value: number }[];
 }
 
 interface RemovedRow {
@@ -34,7 +38,10 @@ function parse(row: RemovedRow): { day: SavedDay; photoIds: string[] } {
   try {
     const day = JSON.parse(row.data) as SavedDay;
     const photoIds = JSON.parse(row.photo_ids) as unknown;
-    if (day.v !== 1 || !Array.isArray(day.answers) || !Array.isArray(day.tags) || !Array.isArray(photoIds)) throw new Error('shape');
+    if ((day.v !== 1 && day.v !== 2) || !Array.isArray(day.answers) || !Array.isArray(day.tags) || !Array.isArray(photoIds)) {
+      throw new Error('shape');
+    }
+    if (day.trackers !== undefined && !Array.isArray(day.trackers)) throw new Error('shape');
     return { day, photoIds: photoIds.filter((id): id is string => typeof id === 'string') };
   } catch {
     throw new UserFacingError('damaged-removed-day', 'This removed day can’t be read any more.');
@@ -56,6 +63,7 @@ export class RemovedDaysStore {
     private readonly entries: EntriesStore,
     private readonly photos: PhotoStore,
     private readonly tags: TagStore,
+    private readonly trackers: TrackerStore,
   ) {}
 
   /** Deletes the day and keeps it in Recently removed. Returns its id there, or null when the day was empty. */
@@ -75,10 +83,16 @@ export class RemovedDaysStore {
       const photoIds = this.db
         .all<{ id: string }>('SELECT id FROM photos WHERE entry_date = ? AND removed_at IS NULL ORDER BY position', [date])
         .map((r) => r.id);
+      const trackers = this.db.all<{ id: number; label: string; value: number }>(
+        `SELECT t.id, t.label, v.value FROM tracker_values v JOIN trackers t ON t.id = v.tracker_id
+         WHERE v.entry_date = ? ORDER BY t.archived, t.position, t.id`,
+        [date],
+      );
       const hasSomething =
         photoIds.length > 0 ||
         answers.length > 0 ||
         tags.length > 0 ||
+        trackers.length > 0 ||
         (entry !== undefined &&
           (entry.body.trim() !== '' || entry.mood_note.trim() !== '' || entry.mood !== null || entry.energy !== null || entry.favorite === 1));
       if (!hasSomething) {
@@ -86,7 +100,7 @@ export class RemovedDaysStore {
         return null;
       }
       const saved: SavedDay = {
-        v: 1,
+        v: 2,
         entry: entry
           ? {
               body: entry.body,
@@ -99,8 +113,9 @@ export class RemovedDaysStore {
           : null,
         answers: answers.map((a) => ({ promptId: a.prompt_id, promptText: a.prompt_text, answer: a.answer, favorite: a.favorite === 1 })),
         tags,
+        trackers: trackers.map((t) => ({ id: t.id, label: t.label, value: t.value })),
       };
-      // Moves the photos to Recently removed and deletes the day, its answers and tags.
+      // Moves the photos to Recently removed and deletes the day, its answers, tags and tracker answers.
       this.entries.remove(date);
       const { lastInsertRowid } = this.db.run(
         'INSERT INTO removed_days (date, data, photo_ids, removed_at) VALUES (?, ?, ?, ?)',
@@ -170,6 +185,9 @@ export class RemovedDaysStore {
         } catch {
           // A tag that can't be added (the day is full of tags) is left out.
         }
+      }
+      for (const tracker of day.trackers ?? []) {
+        if (typeof tracker?.id === 'number' && typeof tracker.value === 'number') this.trackers.restoreValue(date, tracker.id, tracker.value);
       }
       for (const photoId of photoIds) {
         const photo = this.db.get<{ entry_date: string; removed_at: string | null }>('SELECT entry_date, removed_at FROM photos WHERE id = ?', [photoId]);

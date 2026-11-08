@@ -25,6 +25,7 @@ export interface EntryRow {
   photo_count: number;
   favorite_moments: number;
   tag_count: number;
+  tracker_count: number;
   has_content: number;
   created_at: string;
   updated_at: string;
@@ -193,7 +194,7 @@ export class EntriesStore {
   }
 
   /**
-   * Deletes a day's writing, mood, answers and tags. Its photos are not deleted:
+   * Deletes a day's writing, mood, answers, tags and tracker answers. Its photos are not deleted:
    * they move to "Recently removed", where they can be restored. (The API keeps
    * the day itself in Recently removed too: see removedDays.ts.)
    */
@@ -328,10 +329,12 @@ export class EntriesStore {
       countWords(entry.body) + countWords(entry.mood_note) + answered.reduce((n, a) => n + countWords(a.answer), 0);
     const favoriteMoments = answered.filter((a) => a.favorite === 1).length + photos.filter((p) => p.favorite === 1).length;
     const tagLabels = this.syncWrittenTags(date, [entry.body, entry.mood_note, ...answered.map((a) => a.answer), ...photos.map((p) => p.caption)]);
+    const trackers = this.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM tracker_values WHERE entry_date = ?', [date])!.n;
     this.db.run(
-      `UPDATE entries SET word_count = ?, has_text = ?, answer_count = ?, photo_count = ?, favorite_moments = ?, tag_count = ?
+      `UPDATE entries SET word_count = ?, has_text = ?, answer_count = ?, photo_count = ?, favorite_moments = ?, tag_count = ?,
+         tracker_count = ?
        WHERE date = ?`,
-      [words, hasText ? 1 : 0, answered.length, photos.length, favoriteMoments, tagLabels.length, date],
+      [words, hasText ? 1 : 0, answered.length, photos.length, favoriteMoments, tagLabels.length, trackers, date],
     );
 
     this.db.run('DELETE FROM search_index WHERE rowid = ?', [rowid]);

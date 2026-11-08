@@ -24,6 +24,9 @@ never sends your writing or photos anywhere.
   note. A mood on its own is enough for a day.
 - **Tags** — tap a quick chip (*Family*, *Walk*, *Reading*… or your own) or write `#something` anywhere in a day.
   Journal finds days by tag, and a tag on its own is enough for a day too.
+- **Trackers** — keep an eye on a few small things of your own (up to eight), next to your mood: *Went outside*,
+  *Took my medicine* (yes or no) or *Sleep*, *Stress* (1 to 5). Answer them when you like; a day without an answer
+  isn’t a “no”. A tracker you no longer need can be put away — its answers are kept.
 - **Letters to the future** — write to yourself on a day that hasn’t come yet. The letter stays sealed (even
   mJournal doesn’t show it) until that day, then waits at the top of its page.
 - **Quick note** — a shortcut that works anywhere on your computer (*Ctrl + Alt + J*, if you choose one), or *Quick
@@ -40,11 +43,13 @@ never sends your writing or photos anywhere.
 - **Memories** — a scrapbook-style gallery of your photos by month, with captions and a larger viewer that links
   back to the day.
 - **Monthly** — a letter to yourself: an intention for the month (it shows on Today), what you recorded (clearly
-  labelled as data), the month’s photos, a few moments picked by simple published rules, and your own reflection.
+  labelled as data, trackers included), the month’s photos, a few moments picked by simple published rules, and
+  your own reflection.
 - **Year in review** — a letter about the whole year: what you recorded, the year in moods, month by month with each
   month’s intention, moments, photos, tags and your own reflection. From 15 December, Today points to it.
 - **Insights** — gentle numbers: an optional streak, days per month, mood history, moods by weekday, average energy
-  (also by mood), words and photos per month, tags and a year in moods. No points, no penalties.
+  (also by mood), words and photos per month, tags, trackers (also month by month) and a year in moods. No points,
+  no penalties.
 - **Backups** — complete backups in one file, made by hand or automatically into a folder you choose, optionally
   protected with a password; a careful restore; JSON and CSV export; and daily safety snapshots you can go back to.
 - **An optional PIN** — mJournal asks for it whenever it opens, after a while without use, and when your computer goes
@@ -231,7 +236,11 @@ Found a security problem? Please report it privately, as described in [SECURITY.
 
 ## How mJournal counts things
 
-- A day counts as **journaled** when anything was saved for it: a mood, energy, some words, a photo or a tag.
+- A day counts as **journaled** when anything was saved for it: a mood, energy, some words, a photo, a tag or a
+  tracker’s answer (a “no” too: it was recorded).
+- **Trackers** count only the days you answered them: *Yes on 12 of 18 days* for a yes-or-no tracker, the average
+  of your answers for a 1-to-5 one. A tracker with answers can be put away but not deleted, so a day keeps what was
+  recorded on it.
 - **Deleting a day** moves it to *Settings → Recently removed* (with an *Undo* right away), like a removed photo.
   Restoring never overwrites anything written on that day since: different text is added after a blank line.
 - Your **current streak** is the number of days in a row up to today. If today is still empty, a streak that ended

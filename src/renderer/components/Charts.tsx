@@ -3,9 +3,10 @@
  * scores, no trends drawn as judgments. Every chart has a text equivalent.
  */
 import type { CSSProperties, ReactNode } from 'react';
-import type { DaySummary, MoodRecord } from '@core/api';
+import type { DaySummary, MoodRecord, TrackerSummary } from '@core/api';
 import { monthDays, parseDateKey, type DateKey, type MonthKey } from '@core/dates';
 import { energyLabel } from '@core/moods';
+import { SCALE_MAX } from '@core/trackers';
 import { MoodIcon } from './MoodIcon';
 
 /** Splits points into runs of neighbours, so lines never bridge days or months without data. */
@@ -304,13 +305,15 @@ export function StackedMoodChart({
 export function LabeledBars({
   items,
   max,
+  className,
 }: {
   items: { key: string; label: ReactNode; value: number; text: string; color?: string }[];
   max?: number;
+  className?: string;
 }) {
   const top = max ?? Math.max(1, ...items.map((item) => item.value));
   return (
-    <ul className="mood-bars labeled-bars">
+    <ul className={`mood-bars labeled-bars${className ? ` ${className}` : ''}`}>
       {items.map((item, i) => (
         <li key={item.key} style={{ '--i': i } as CSSProperties}>
           <span className="mood-bars-label">{item.label}</span>
@@ -327,13 +330,46 @@ export function LabeledBars({
   );
 }
 
-/** Average recorded energy per month on a 1–5 scale. */
+/**
+ * What was recorded for each tracker: the share of yes for a yes-or-no tracker, the average for a 1–5 one.
+ * The text next to each bar says exactly what was counted.
+ */
+export function TrackerBars({ trackers }: { trackers: TrackerSummary[] }) {
+  const days = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;
+  return (
+    <LabeledBars
+      max={1}
+      className="tracker-bars"
+      items={trackers.map((t) =>
+        t.kind === 'check'
+          ? {
+              key: String(t.id),
+              label: t.label,
+              value: t.days ? t.yes / t.days : 0,
+              text: `Yes on ${t.yes} of ${days(t.days)}`,
+              color: 'var(--sage-300)',
+            }
+          : {
+              key: String(t.id),
+              label: t.label,
+              value: (t.average ?? 0) / SCALE_MAX,
+              text: `Average ${t.average} · ${days(t.days)}`,
+              color: 'var(--lavender-300)',
+            },
+      )}
+    />
+  );
+}
+
+/** Average recorded energy per month on a 1–5 scale — or, with `scaleName`, the average of a 1–5 tracker. */
 export function EnergyChart({
   months,
   formatMonth,
+  scaleName,
 }: {
   months: { month: MonthKey; average: number | null; days: number }[];
   formatMonth: (month: MonthKey, width: 'short' | 'long') => string;
+  scaleName?: string;
 }) {
   const width = 600;
   const height = 150;
@@ -366,7 +402,9 @@ export function EnergyChart({
             {m.average !== null && (
               <span className="energy-dot" style={{ top: `${(y(m.average) / height) * 100}%` }} title={`${formatMonth(m.month, 'long')}: ${m.average} average over ${m.days} days`}>
                 <span className="visually-hidden">
-                  {formatMonth(m.month, 'long')}: average energy {m.average} of 5 ({energyLabel(Math.round(m.average))}), from {m.days} days
+                  {scaleName
+                    ? `${formatMonth(m.month, 'long')}: ${scaleName}, ${m.average} of 5 on average, from ${m.days} days`
+                    : `${formatMonth(m.month, 'long')}: average energy ${m.average} of 5 (${energyLabel(Math.round(m.average))}), from ${m.days} days`}
                 </span>
               </span>
             )}
@@ -377,9 +415,9 @@ export function EnergyChart({
         ))}
       </ol>
       <div className="energy-axis" aria-hidden="true">
-        <span style={{ top: y(5) }}>5 · very high</span>
-        <span style={{ top: y(3) }}>3 · steady</span>
-        <span style={{ top: y(1) }}>1 · very low</span>
+        <span style={{ top: y(5) }}>{scaleName ? '5' : '5 · very high'}</span>
+        <span style={{ top: y(3) }}>{scaleName ? '3' : '3 · steady'}</span>
+        <span style={{ top: y(1) }}>{scaleName ? '1' : '1 · very low'}</span>
       </div>
     </figure>
   );

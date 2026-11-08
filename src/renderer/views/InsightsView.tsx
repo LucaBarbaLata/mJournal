@@ -1,8 +1,17 @@
 /** Gentle statistics. Streaks are a small encouragement, never a scoreboard. */
 import { useState } from 'react';
-import type { StatsRange } from '@core/api';
+import type { StatsOverview, StatsRange, TrackerMonths } from '@core/api';
 import { formatMonthName, weekdayNames, weekdayOrder, type MonthKey } from '@core/dates';
-import { BarChart, EnergyChart, LabeledBars, MoodBars, StackedMoodBars, StackedMoodChart, YearInMoodsGrid } from '../components/Charts';
+import {
+  BarChart,
+  EnergyChart,
+  LabeledBars,
+  MoodBars,
+  StackedMoodBars,
+  StackedMoodChart,
+  TrackerBars,
+  YearInMoodsGrid,
+} from '../components/Charts';
 import { CountUp } from '../components/CountUp';
 import { Sparkles } from '../components/Decorations';
 import { Icon } from '../components/Icon';
@@ -153,7 +162,7 @@ export function InsightsView() {
           </dl>
 
           <div className="insights-period" role="group" aria-label="Period for the cards below">
-            <span className="muted">Moods, weekdays, energy and tags for</span>
+            <span className="muted">Moods, weekdays, energy, tags and trackers for</span>
             <div className="segmented range-switch" role="radiogroup" aria-label="Period">
               {RANGES.map((r) => (
                 <button key={r.key} type="button" role="radio" aria-checked={range === r.key} onClick={() => setRange(r.key)}>
@@ -268,6 +277,8 @@ export function InsightsView() {
               )}
             </section>
 
+            {s.trackersByMonth.length > 0 && <TrackerCard trackers={s.trackers} history={s.trackersByMonth} periodLabel={periodLabel} />}
+
             <section className="card wide" aria-labelledby="words-photos">
               <div className="card-title">
                 <h2 id="words-photos">{perMonth === 'words' ? 'Words per month' : 'Photos per month'}</h2>
@@ -354,7 +365,10 @@ export function InsightsView() {
               <Icon name="info" size={16} /> How these numbers are counted
             </summary>
             <ul>
-              <li>A day counts as journaled when you saved anything for it: a mood, energy, some words or a photo.</li>
+              <li>
+                A day counts as journaled when you saved anything for it: a mood, energy, some words, a photo, a tag or a
+                tracker’s answer.
+              </li>
               <li>
                 Your current streak is the number of days in a row up to today. If you haven’t written today yet, a streak that
                 ended yesterday still counts — the day isn’t over.
@@ -363,11 +377,91 @@ export function InsightsView() {
               <li>Moods and energy are shown exactly as you recorded them. mJournal never guesses how you felt.</li>
               <li>Energy by mood is a plain average of the energy you recorded on days that also have that mood.</li>
               <li>A tag counts once per day, whether you tapped it or wrote it as #tag.</li>
+              <li>
+                Trackers count only the days you answered them. A day without an answer isn’t a “no” — it’s simply not
+                recorded.
+              </li>
               {!settings.showStreaks && <li>Streaks are hidden — you can show them again in Settings.</li>}
             </ul>
           </details>
         </>
       )}
     </div>
+  );
+}
+
+/** What each tracker recorded in the period, and one tracker month by month over the last 12 months. */
+function TrackerCard({
+  trackers,
+  history,
+  periodLabel,
+}: {
+  trackers: StatsOverview['trackers'];
+  history: TrackerMonths[];
+  periodLabel: string;
+}) {
+  const [chosen, setChosen] = useState<number | null>(null);
+  const shown = history.find((t) => t.id === chosen) ?? history[0];
+  return (
+    <section className="card wide" aria-labelledby="tracker-summary">
+      <div className="card-title">
+        <h2 id="tracker-summary">Trackers</h2>
+        <span className="spacer" />
+        <span className="muted card-hint">{periodLabel}</span>
+      </div>
+      {trackers.length === 0 ? (
+        <p className="muted chart-empty">No trackers answered in this period.</p>
+      ) : (
+        <TrackerBars trackers={trackers} />
+      )}
+      <div className="tracker-history-head">
+        <h3 className="sub-title" id="tracker-history">
+          Month by month
+        </h3>
+        <span className="spacer" />
+        {history.length > 1 && (
+          <>
+            <label className="visually-hidden" htmlFor="tracker-history-pick">
+              Tracker
+            </label>
+            <select
+              id="tracker-history-pick"
+              className="select select-chip"
+              value={shown.id}
+              onChange={(event) => setChosen(Number(event.target.value))}
+            >
+              {history.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+      </div>
+      {shown.kind === 'check' ? (
+        <BarChart
+          label={`Days “${shown.label}” was answered yes, in each of the last 12 months`}
+          unit={['day with yes', 'days with yes']}
+          data={shown.months.map((m) => ({
+            key: m.month,
+            label: monthLabel(m.month, 'short'),
+            value: m.yes,
+            title: `${monthLabel(m.month, 'long')} (answered on ${m.days})`,
+          }))}
+        />
+      ) : (
+        <EnergyChart
+          scaleName={shown.label}
+          formatMonth={monthLabel}
+          months={shown.months.map((m) => ({ month: m.month, average: m.average, days: m.days }))}
+        />
+      )}
+      <p className="muted card-hint">
+        {shown.kind === 'check'
+          ? `“${shown.label}”: the days you answered yes, last 12 months. Hover a month to see how many days you answered at all.`
+          : `“${shown.label}”: the average of your answers (1 – 5) each month, last 12 months.`}
+      </p>
+    </section>
   );
 }

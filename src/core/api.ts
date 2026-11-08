@@ -11,6 +11,7 @@ import type { LockStatus } from './lock';
 import type { MoodColor, MoodIcon } from './moods';
 import type { PromptCategory } from './prompts';
 import type { StreakSummary } from './streaks';
+import type { TrackerKind } from './trackers';
 import type { UpdateStatus } from './updates';
 
 // ---------------------------------------------------------------------------
@@ -96,12 +97,65 @@ export interface TagRecord {
   written: boolean;
 }
 
+/** A tracker (Settings → Trackers): something answered each day with yes or no, or on a 1–5 scale. */
+export interface TrackerRecord {
+  id: number;
+  label: string;
+  kind: TrackerKind;
+  position: number;
+  /** Put away: no longer on the day page, but its answers are kept (and shown on the days that have one). */
+  archived: boolean;
+  /** Days with an answer. */
+  days: number;
+}
+
+export interface TrackerInput {
+  label: string;
+  kind: TrackerKind;
+}
+
+export interface TrackerPatch {
+  label?: string;
+  /** Only while the tracker has no answers. */
+  kind?: TrackerKind;
+  archived?: boolean;
+}
+
+/** A tracker's answer on one day: 0 or 1 (no / yes) for 'check', 1–5 for 'scale'. */
+export interface DayTrackerValue {
+  trackerId: number;
+  value: number;
+}
+
+/** What was recorded for one tracker in a period. */
+export interface TrackerSummary {
+  id: number;
+  label: string;
+  kind: TrackerKind;
+  archived: boolean;
+  /** Days with an answer. */
+  days: number;
+  /** Days answered yes ('check'; 0 for 'scale'). */
+  yes: number;
+  /** The average answer, to one decimal ('scale'; null for 'check'). */
+  average: number | null;
+}
+
+/** One tracker month by month: days answered, days answered yes ('check'), the average ('scale'). */
+export interface TrackerMonths {
+  id: number;
+  label: string;
+  kind: TrackerKind;
+  months: { month: MonthKey; days: number; yes: number; average: number | null }[];
+}
+
 export interface DayData {
   date: DateKey;
   entry: EntryRecord | null;
   answers: AnswerRecord[];
   photos: PhotoRecord[];
   tags: DayTag[];
+  trackers: DayTrackerValue[];
 }
 
 /** Compact description of a day, used by the calendar, history and recaps. */
@@ -267,6 +321,8 @@ export interface MonthRecap {
   days: DaySummary[];
   photos: PhotoRecord[];
   moments: NotableMoment[];
+  /** Trackers answered during the month. */
+  trackers: TrackerSummary[];
   reflection: Record<string, string>;
   reflectionUpdatedAt: string | null;
 }
@@ -326,6 +382,10 @@ export interface StatsOverview {
   photosByMonth: { month: MonthKey; count: number }[];
   /** The most used tags in the chosen period. */
   tagCounts: { tag: string; label: string; count: number }[];
+  /** Trackers answered in the chosen period, in the order of the tracker list. */
+  trackers: TrackerSummary[];
+  /** The last 12 months, for each tracker answered in them. */
+  trackersByMonth: TrackerMonths[];
 }
 
 export interface YearInMoods {
@@ -533,6 +593,17 @@ export interface MJournalApi {
     /** Un-picks the tag everywhere; it stays only where it is written as #tag. */
     remove(name: string): Promise<void>;
   };
+  trackers: {
+    /** Every tracker, the ones put away included, in their order. */
+    list(): Promise<TrackerRecord[]>;
+    create(input: TrackerInput): Promise<TrackerRecord>;
+    update(id: number, patch: TrackerPatch): Promise<TrackerRecord>;
+    reorder(ids: number[]): Promise<TrackerRecord[]>;
+    /** Deletes a tracker that has no answers. One with answers can only be put away. */
+    remove(id: number): Promise<void>;
+    /** Answers a tracker for a day (null clears the answer). Returns the day's answers. */
+    setForDay(date: DateKey, id: number, value: number | null): Promise<DayTrackerValue[]>;
+  };
   moods: {
     list(): Promise<MoodRecord[]>;
     create(input: MoodInput): Promise<MoodRecord>;
@@ -702,6 +773,7 @@ export const API_METHODS = {
     'setPinned',
   ],
   tags: ['list', 'forDay', 'create', 'update', 'reorder', 'remove'],
+  trackers: ['list', 'create', 'update', 'reorder', 'remove', 'setForDay'],
   moods: ['list', 'create', 'update', 'reorder', 'resetDefaults'],
   photos: [
     'pickAndImport',

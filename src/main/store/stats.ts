@@ -4,6 +4,7 @@ import { addMonths, firstDayOfMonth, makeDateKey, monthDays, monthOf, type DateK
 import { computeStreaks, type StreakSummary } from '@core/streaks';
 import type { Db } from './database';
 import type { EntriesStore } from './entries';
+import type { TrackerStore } from './trackers';
 
 const MONTHS_SHOWN = 12;
 
@@ -25,6 +26,7 @@ export class StatsStore {
   constructor(
     private readonly db: Db,
     private readonly entries: EntriesStore,
+    private readonly trackers: TrackerStore,
   ) {}
 
   overview(today: DateKey, range: StatsRange): StatsOverview {
@@ -155,6 +157,8 @@ export class StatsStore {
       wordsByMonth: months.map((month) => ({ month, words: words.get(month) ?? 0 })),
       photosByMonth: months.map((month) => ({ month, count: photosPerMonth.get(month) ?? 0 })),
       tagCounts,
+      trackers: this.trackers.summaries(rangeFrom, today),
+      trackersByMonth: this.trackers.byMonth(months),
     };
   }
 
