@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { EVENTS, type DesktopStatus, type Settings } from '@core/api';
 import { todayKey } from '@core/dates';
-import { LATEST_RELEASE_API } from '@core/updates';
+import { LATEST_RELEASE_API, RELEASES_API } from '@core/updates';
 import { UserFacingError } from '@core/validation';
 import icon from '../../resources/icon.png?asset';
 import { createApi } from './api';
@@ -108,7 +108,8 @@ let mainWindow: BrowserWindow | null = null;
 let reminder: Reminder | null = null;
 let updates: UpdateChecker | null = null;
 
-// End-to-end tests point the update check at a local server instead of GitHub.
+// End-to-end tests point the update check at a local server instead of GitHub; "What's new" then asks the same
+// server's /releases.
 const testUpdateFeed = app.isPackaged ? undefined : process.env.MJOURNAL_UPDATE_URL;
 
 /** GitHub's requests get their own in-memory session: no cookies, no cache, nothing shared with the window. */
@@ -116,15 +117,25 @@ function githubSession(): Electron.Session {
   return session.fromPartition('mjournal-update-check', { cache: false });
 }
 
-/** The only request mJournal sends to the internet by itself (see services/updates.ts). */
-async function fetchLatestRelease(): Promise<unknown> {
-  const response = await githubSession().fetch(testUpdateFeed ?? LATEST_RELEASE_API, {
+/** GitHub's API answer at `url`, or null when there is nothing there (404). */
+async function askGitHub(url: string): Promise<unknown> {
+  const response = await githubSession().fetch(url, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'mJournal' },
     signal: AbortSignal.timeout(20_000),
   });
-  if (response.status === 404) return null; // Nothing has been released yet.
+  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
   return response.json();
+}
+
+/** The only request mJournal sends to the internet by itself (see services/updates.ts). Null: nothing is released yet. */
+function fetchLatestRelease(): Promise<unknown> {
+  return askGitHub(testUpdateFeed ?? LATEST_RELEASE_API);
+}
+
+/** The newest releases with their notes: asked only when the person opens "What's new". */
+function fetchReleases(): Promise<unknown> {
+  return askGitHub(testUpdateFeed ? new URL('releases', testUpdateFeed).href : RELEASES_API);
 }
 
 /** How this copy of mJournal installs a new version itself, or null when it can't (see services/updateInstaller.ts). */
@@ -415,6 +426,7 @@ async function start(): Promise<void> {
   updates = new UpdateChecker({
     currentVersion: app.getVersion(),
     fetchLatestRelease,
+    fetchReleases,
     enabled: () => journalHost.journal.settings.get().checkForUpdates,
     load: () => journalHost.journal.settings.getInternal('updateCheck'),
     save: (check) => journalHost.journal.settings.setInternal('updateCheck', check),

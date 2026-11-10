@@ -124,8 +124,9 @@ or newer isn’t installed (Ubuntu-based systems ship an older one), a private c
 ### Updating
 
 Each time it starts, and about once a day while it stays open, mJournal asks GitHub whether a newer version is out,
-and if so a small note appears in the sidebar. Nothing is downloaded until you click **Update** (in the note, or in
-**Settings → Updates**). mJournal then downloads the new version from the Releases page, checks it against the
+and if so a small note appears in the sidebar. *See what’s new* in it (or *What’s new* in **Settings → Updates**)
+shows what changed since your version, from the release notes on GitHub. Nothing is downloaded until you click
+**Update** (in the note, in *What’s new*, or in **Settings → Updates**). mJournal then downloads the new version from the Releases page, checks it against the
 release’s `SHA256SUMS.txt`, installs it and opens again — and your journal **stays as it is**:
 
 - **Installed on Windows:** mJournal closes, the installer updates it in the same folder without showing its windows,
@@ -212,9 +213,10 @@ All of these live in **Settings → Backup & export**.
   leave your computer; fonts and icons are bundled, and search, statistics and backups all run locally.
 - **One question to the internet.** The only request mJournal makes by itself is the update check: when it starts,
   and about once a day while it stays open, it asks GitHub (`api.github.com`) which version was released last. Like any web request it reveals your IP address
-  to GitHub, but it carries nothing about you or your journal — no cookies, no ids, just “mJournal”. Clicking
-  **Update** downloads the new version from GitHub’s Releases page, just as anonymously. Turn the check off in
-  **Settings → Updates** and mJournal never goes online unless you click *Check now* or *Update*.
+  to GitHub, but it carries nothing about you or your journal — no cookies, no ids, just “mJournal”. Opening
+  *What’s new* asks GitHub for the release notes, and clicking **Update** downloads the new version from GitHub’s
+  Releases page, both just as anonymously. Turn the check off in **Settings → Updates** and mJournal never goes online
+  unless you click *Check now*, *What’s new* or *Update*.
 - **Not encrypted at rest.** Your journal is stored as ordinary files in your user folder. Anyone who can sign in to
   your account — or read your disk — can read them. Protect it with a password on your account and turn on disk
   encryption: on Windows, *BitLocker* or *Device encryption* in Windows settings; on Linux, full-disk encryption, which
@@ -298,11 +300,14 @@ as pull requests, which the same workflow tests.
 
 ### Releasing a version
 
-1. Raise the version (skip this for the first release, 1.0.0), then commit and push:
+1. Raise the version (skip this for the first release, 1.0.0):
 
    ```powershell
    npm version patch --no-git-tag-version   # or minor / major: updates package.json and package-lock.json
    ```
+
+   In [CHANGELOG.md](CHANGELOG.md), write what changes for the people who use mJournal under `## <version>` (rename
+   *Unreleased*). That section becomes the release notes, and mJournal shows it in *What’s new*. Then commit and push.
 
 2. On GitHub, open **Actions → Release → Run workflow** and pick what to make:
    - **draft** — only you can see it. Download and try the installers, then press *Publish release* on GitHub.
@@ -311,8 +316,9 @@ as pull requests, which the same workflow tests.
 
 [.github/workflows/release.yml](.github/workflows/release.yml) type-checks and tests everything on Windows and on Linux,
 builds the installer and the portable app on Windows and the `.deb` and the AppImage on Linux, uploads the two Windows
-files to VirusTotal, and puts all four on the Releases page with a `SHA256SUMS.txt` and links to the VirusTotal results
-in the release notes. If either system’s tests or build fail, or the scan can’t be done, nothing is published. The scan
+files to VirusTotal, and puts all four on the Releases page with a `SHA256SUMS.txt`. The release notes are the version’s
+section of `CHANGELOG.md` (the run warns when there is none), GitHub’s list of merged pull requests and links to the
+VirusTotal results. If either system’s tests or build fail, or the scan can’t be done, nothing is published. The scan
 needs a free VirusTotal API key saved once as the repository secret `VT_API_KEY` (*Settings → Secrets and variables →
 Actions*). The `v1.0.0`-style tag is
 created when the release is published. Running it again for the same version replaces a draft. Running it with

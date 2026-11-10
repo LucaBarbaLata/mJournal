@@ -515,6 +515,83 @@ dialog.dialog::backdrop {
   background: var(--paper-tint);
 }
 
+/* ---------- What's new in a newer version (components/UpdateNotice.tsx, ReleaseNotes.tsx) ---------- */
+.whats-new-notes {
+  display: grid;
+  gap: var(--s-5);
+  max-height: min(56vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: var(--s-2);
+}
+.whats-new-release {
+  display: grid;
+  gap: var(--s-2);
+  align-content: start;
+}
+.whats-new-release + .whats-new-release {
+  padding-top: var(--s-5);
+  border-top: 1px dashed var(--line-strong);
+}
+.whats-new-date {
+  font-size: var(--text-sm);
+}
+.release-notes {
+  display: grid;
+  gap: var(--s-3);
+  overflow-wrap: anywhere;
+}
+.release-notes .release-notes-heading {
+  margin-top: var(--s-2);
+  font-size: var(--text-md);
+}
+.release-notes .release-notes-subheading {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+.release-notes ul,
+.release-notes ol {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding-left: 22px;
+}
+.release-notes li > ul,
+.release-notes li > ol {
+  margin-top: var(--s-1);
+}
+.release-notes code {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--paper-tint);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.88em;
+}
+.release-notes pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--paper-tint);
+  font-size: var(--text-sm);
+}
+.release-notes pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  overflow-wrap: normal;
+}
+.release-notes blockquote {
+  margin: 0;
+  padding-left: var(--s-3);
+  border-left: 3px solid var(--lavender-300);
+  color: var(--ink-soft);
+}
+
 /* ---------- Toasts ---------- */
 .toasts {
   position: fixed;

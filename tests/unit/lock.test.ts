@@ -215,6 +215,7 @@ describe('While locked, the API', () => {
       check: async () => OFF,
       install: async () => OFF,
       dismissResult: () => OFF,
+      changes: async () => ({ releases: [], complete: true }),
     },
     openReleasePage: async () => undefined,
   };

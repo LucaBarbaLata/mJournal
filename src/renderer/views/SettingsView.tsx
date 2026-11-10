@@ -13,7 +13,7 @@ import { formatLongDate, todayKey, type DateFormatPreference } from '@core/dates
 import type { UpdateStatus } from '@core/updates';
 import { Icon, type IconName } from '../components/Icon';
 import { LogoMark, Wordmark } from '../components/Logo';
-import { downloadPercent, installUpdate, openReleasePage, UpdateProgress } from '../components/UpdateNotice';
+import { downloadPercent, installUpdate, openReleasePage, UpdateProgress, WhatsNewDialog } from '../components/UpdateNotice';
 import { api, errorMessage } from '../lib/api';
 import { useApp, type AppState } from '../lib/app';
 import { useQuery } from '../lib/data';
@@ -520,6 +520,7 @@ function UpdateSettings() {
   const { settings, set, error } = useSetting();
   const { format, info } = useApp();
   const [status, setStatus] = useUpdateStatus();
+  const [showChanges, setShowChanges] = useState(false);
   const busy = status?.state === 'checking' || status?.state === 'downloading' || status?.state === 'installing';
   const checkNow = async () => {
     try {
@@ -582,6 +583,11 @@ function UpdateSettings() {
               {status.installer ? ' from GitHub' : ''}
             </button>
           )}
+          {status?.state === 'available' && (
+            <button type="button" className="btn" onClick={() => setShowChanges(true)}>
+              <Icon name="sparkle" size={16} /> What’s new
+            </button>
+          )}
           <button type="button" className="btn" disabled={busy} onClick={() => void checkNow()}>
             <Icon name="restore" size={16} /> Check now
           </button>
@@ -589,6 +595,9 @@ function UpdateSettings() {
       </div>
       <ErrorLine error={status?.state === 'available' ? status.installError : null} />
       <ErrorLine error={error} />
+      {showChanges && status && (
+        <WhatsNewDialog status={status} onClose={() => setShowChanges(false)} onUpdate={() => void update()} />
+      )}
     </SettingsSection>
   );
 }

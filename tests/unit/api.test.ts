@@ -38,7 +38,13 @@ function setup(overrides: Partial<Platform> = {}) {
     showItemInFolder: (p) => revealed.push(p),
     openFolder: async () => undefined,
     settingsChanged: (s) => changed.push(s),
-    updates: { status: () => upToDate, check: async () => upToDate, install: async () => upToDate, dismissResult: () => upToDate },
+    updates: {
+      status: () => upToDate,
+      check: async () => upToDate,
+      install: async () => upToDate,
+      dismissResult: () => upToDate,
+      changes: async () => ({ releases: [{ version: '1.1.0', publishedAt: null, notes: 'New' }], complete: true }),
+    },
     openReleasePage: async () => void opened.push('releases'),
     ...overrides,
   };
@@ -238,6 +244,7 @@ describe('API handlers', () => {
     expect((await api.updates.check()).state).toBe('up-to-date');
     expect((await api.updates.install()).state).toBe('up-to-date');
     expect((await api.updates.dismissResult()).result).toBeNull();
+    expect((await api.updates.changes()).releases.map((release) => release.version)).toEqual(['1.1.0']);
     await api.updates.openReleasePage();
     expect(opened).toEqual(['releases']);
   });

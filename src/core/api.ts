@@ -12,7 +12,7 @@ import type { MoodColor, MoodIcon } from './moods';
 import type { PromptCategory } from './prompts';
 import type { StreakSummary } from './streaks';
 import type { TrackerKind } from './trackers';
-import type { UpdateStatus } from './updates';
+import type { UpdateChanges, UpdateStatus } from './updates';
 
 // ---------------------------------------------------------------------------
 // Records
@@ -706,6 +706,11 @@ export interface MJournalApi {
     install(): Promise<UpdateStatus>;
     /** The person closed the window that says how the update went (`result`); it isn't shown again. */
     dismissResult(): Promise<UpdateStatus>;
+    /**
+     * What the newer version changes ("What's new"): the release notes since this version, newest first. Asks
+     * GitHub the first time; rejects when GitHub can't be reached.
+     */
+    changes(): Promise<UpdateChanges>;
     /** Opens the releases page on GitHub in the browser (for copies that can't install updates themselves). */
     openReleasePage(): Promise<void>;
   };
@@ -816,7 +821,7 @@ export const API_METHODS = {
     'snoozeBackupReminder',
     'setBackupPassword',
   ],
-  updates: ['status', 'check', 'install', 'dismissResult', 'openReleasePage'],
+  updates: ['status', 'check', 'install', 'dismissResult', 'changes', 'openReleasePage'],
   lock: ['status', 'unlock', 'lock', 'setPin', 'removePin', 'setAutoLock'],
 } as const satisfies MethodNames<MJournalApi>;
 

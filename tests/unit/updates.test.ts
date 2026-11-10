@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  changesBetween,
   CHECK_INTERVAL_MS,
   installerFileName,
+  MAX_NOTES_LENGTH,
+  RELEASES_PER_PAGE,
   isNewerVersion,
   parseChecksums,
   parseVersion,
@@ -65,6 +68,82 @@ describe('release files', () => {
       ['mJournal-Setup-1.2.3.exe', 'a'.repeat(64)],
       ['mJournal-1.2.3.AppImage', b],
     ]);
+  });
+});
+
+describe('what’s new', () => {
+  const release = (tag: string, notes: string, extra: Record<string, unknown> = {}) => ({
+    tag_name: tag,
+    draft: false,
+    prerelease: false,
+    published_at: '2026-11-08T16:44:11Z',
+    body: notes,
+    ...extra,
+  });
+
+  it('takes the releases after this version up to the newer one, newest first', () => {
+    const answer = [
+      release('v1.4.0', 'Too new: not the version on offer'),
+      release('v1.3.0', 'Trackers'),
+      release('v1.2.1', 'A release candidate counts too', { prerelease: true }),
+      release('v1.2.5', 'Unfinished', { draft: true }),
+      release('v1.2.0', 'This version'),
+      release('v1.1.0', 'Older'),
+      release('nightly', 'Not a version'),
+      'nonsense',
+      release('v1.2.2', 'Listed out of order', { published_at: 'soon', body: 42 }),
+    ];
+    expect(changesBetween(answer, '1.2.0', '1.3.0')).toEqual({
+      releases: [
+        { version: '1.3.0', publishedAt: '2026-11-08T16:44:11Z', notes: 'Trackers' },
+        { version: '1.2.2', publishedAt: null, notes: '' },
+        { version: '1.2.1', publishedAt: '2026-11-08T16:44:11Z', notes: 'A release candidate counts too' },
+      ],
+      complete: true,
+    });
+  });
+
+  it('says when GitHub’s list may stop before this version', () => {
+    const page = Array.from({ length: RELEASES_PER_PAGE }, (_, i) => release(`v2.${RELEASES_PER_PAGE - i}.0`, ''));
+    expect(changesBetween(page, '1.0.0', `2.${RELEASES_PER_PAGE}.0`)?.complete).toBe(false);
+    expect(changesBetween(page.slice(1), '1.0.0', `2.${RELEASES_PER_PAGE}.0`)?.complete).toBe(true);
+    expect(changesBetween([...page.slice(1), release('v1.0.0', '')], '1.0.0', '9.0.0')?.complete).toBe(true);
+  });
+
+  it('cuts very long notes short and ignores an answer that isn’t a list', () => {
+    const [long] = changesBetween([release('v1.1.0', 'x'.repeat(MAX_NOTES_LENGTH + 10))], '1.0.0', '1.1.0')!.releases;
+    expect(long.notes).toHaveLength(MAX_NOTES_LENGTH);
+    expect(changesBetween({ message: 'Not Found' }, '1.0.0', '1.1.0')).toBeNull();
+    expect(changesBetween(null, '1.0.0', '1.1.0')).toBeNull();
+  });
+
+  it('asks GitHub when it’s opened, once while the newer version stays the same, and again after a failure', async () => {
+    let online = false;
+    const fetchReleases = vi.fn(async () => {
+      if (!online) throw new Error('offline');
+      return [release('v1.1.0', 'New things'), release('v1.0.0', 'Old things')];
+    });
+    const updates = new UpdateChecker({
+      currentVersion: '1.0.0',
+      fetchLatestRelease: async () => ({ tag_name: 'v1.1.0' }),
+      fetchReleases,
+      enabled: () => true,
+      load: () => undefined,
+      save: () => undefined,
+      onChange: () => undefined,
+    });
+    // Nothing newer known yet: nothing to ask.
+    expect(await updates.changes()).toEqual({ releases: [], complete: true });
+    expect(fetchReleases).not.toHaveBeenCalled();
+
+    await updates.check();
+    await expect(updates.changes()).rejects.toMatchObject({ name: 'UserFacingError', message: expect.stringMatching(/online/) });
+    online = true;
+    const [first, second] = await Promise.all([updates.changes(), updates.changes()]);
+    expect(first).toEqual({ releases: [{ version: '1.1.0', publishedAt: '2026-11-08T16:44:11Z', notes: 'New things' }], complete: true });
+    expect(second).toEqual(first);
+    expect(await updates.changes()).toEqual(first);
+    expect(fetchReleases).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -186,6 +186,23 @@
 .update-notice-text strong {
   color: var(--ink);
 }
+/* The headline opens "What's new". */
+.update-notice-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+.update-notice-more {
+  display: block;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--lavender-700);
+}
+.update-notice-open:hover .update-notice-more {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .update-notice-actions {
   display: flex;
   flex-wrap: wrap;
@@ -380,6 +397,16 @@
   }
   .update-notice-actions {
     flex-direction: column;
+  }
+  /* Only the sparkle is left of the headline: it opens "What's new". */
+  .update-notice-open {
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--r-sm);
+  }
+  .update-notice-open:hover {
+    background: var(--lavender-100);
   }
   .update-notice-actions .btn {
     width: 34px;

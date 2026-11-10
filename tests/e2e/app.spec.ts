@@ -914,6 +914,94 @@ test('mentions a new version from GitHub, links to it and can put the note away'
   }
 });
 
+test('shows what the new version changes, asking GitHub only when it’s opened', async () => {
+  // Stands in for GitHub: the latest release, and the list of releases with their notes.
+  const requests: string[] = [];
+  const github = createServer((request, response) => {
+    requests.push(request.url ?? '');
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    if (request.url !== '/releases') {
+      response.end(JSON.stringify({ tag_name: 'v9.9.9', draft: false, prerelease: false }));
+      return;
+    }
+    response.end(
+      JSON.stringify([
+        {
+          tag_name: 'v9.9.9',
+          draft: false,
+          prerelease: false,
+          published_at: '2026-11-08T12:00:00Z',
+          body: [
+            '## Highlights',
+            '',
+            '- **Release notes** right in the app',
+            '- A [link](https://example.com) is only its text',
+            '',
+            '**Full Changelog**: https://github.com/LucaBarbaLata/mJournal/compare/v9.9.8...v9.9.9',
+            '',
+            '## VirusTotal scans',
+            '',
+            '- [mJournal-Setup-9.9.9.exe](https://www.virustotal.com/gui/file/abc)',
+          ].join('\r\n'),
+        },
+        { tag_name: 'v9.9.7', draft: true, prerelease: false, body: 'An unpublished draft' },
+        // Released without notes of its own: left out.
+        { tag_name: 'v9.9.6', draft: false, prerelease: false, body: '**Full Changelog**: https://example.com/compare' },
+        { tag_name: 'v9.9.8', draft: false, prerelease: true, published_at: '2026-11-01T12:00:00Z', body: 'A quicker start.' },
+        { tag_name: 'v1.0.0', draft: false, prerelease: false, body: 'Long ago' },
+      ]),
+    );
+  });
+  await new Promise<void>((resolve) => github.listen(0, '127.0.0.1', resolve));
+  const env = { MJOURNAL_UPDATE_URL: `http://127.0.0.1:${(github.address() as AddressInfo).port}/latest` };
+  try {
+    run = await launch(undefined, { env });
+    dirs.push(run.dataDir);
+    const { app, page } = run;
+    await app.evaluate(({ shell }) => {
+      const opened: string[] = [];
+      (globalThis as { opened?: string[] }).opened = opened;
+      shell.openExternal = (async (url: string) => void opened.push(url)) as typeof shell.openExternal;
+    });
+
+    const note = page.getByRole('status', { name: 'New version' });
+    await expect(note).toContainText('mJournal 9.9.9 is out');
+    expect(requests).toEqual(['/latest']);
+    await note.getByRole('button', { name: /See what’s new/ }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'What’s new in mJournal 9.9.9' });
+    await expect(dialog.getByRole('heading', { name: 'mJournal 9.9.9', exact: true })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Highlights' })).toBeVisible();
+    await expect(dialog).toContainText('Release notes right in the app');
+    await expect(dialog).toContainText('A link is only its text');
+    await expect(dialog.getByRole('heading', { name: 'mJournal 9.9.8', exact: true })).toBeVisible();
+    await expect(dialog).toContainText('A quicker start.');
+    await expect(dialog.getByRole('heading', { name: 'mJournal 9.9.6' })).toHaveCount(0);
+    for (const hidden of ['VirusTotal', 'Full Changelog', 'An unpublished draft', 'Long ago']) {
+      await expect(dialog).not.toContainText(hidden);
+    }
+    await expect(dialog.getByRole('link')).toHaveCount(0);
+    expect(requests).toEqual(['/latest', '/releases']);
+
+    // This copy can't install updates itself (a development build), so it offers GitHub.
+    await dialog.getByRole('button', { name: 'Get it', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as { opened?: string[] }).opened))
+      .toEqual(['https://github.com/LucaBarbaLata/mJournal/releases/latest']);
+
+    // Settings → Updates opens it too, without asking GitHub again.
+    await page.getByRole('link', { name: /^Settings/ }).click();
+    await page.locator('#settings-updates').getByRole('button', { name: 'What’s new' }).click();
+    await expect(dialog).toContainText('Release notes right in the app');
+    await dialog.getByRole('button', { name: 'Not now' }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(requests).toEqual(['/latest', '/releases']);
+  } finally {
+    github.close();
+  }
+});
+
 test('says once, after an update, whether it worked', async () => {
   const dataDir = makeDataDir();
   dirs.push(dataDir);

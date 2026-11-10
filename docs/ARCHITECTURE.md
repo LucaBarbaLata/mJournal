@@ -257,8 +257,9 @@ from Monthly, Insights and — from 15 December to 31 January — a card on Toda
 - Navigation, `window.open`, `<webview>` and all permission requests are blocked.
 - Packaged app: Electron fuses disable `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and inspector flags, and enforce asar
   integrity and loading only from the asar.
-- Logs never contain journal content. There is no telemetry. The only network request is the update check (below);
-  the interface itself can’t reach the network at all (its content-security policy allows no remote origins).
+- Logs never contain journal content. There is no telemetry. The only network request made by itself is the update
+  check (below); the release notes for *What’s new* and the update itself are fetched only when the person asks. The
+  interface itself can’t reach the network at all (its content-security policy allows no remote origins).
 - Optional PIN lock (below). It keeps mJournal's window closed; it is not encryption.
 - Backups can be password-protected (see *Password-protected backups*); the journal folder itself is not encrypted:
   protecting it relies on the operating system account and disk encryption.
@@ -295,6 +296,17 @@ request: a plain `GET` of GitHub’s latest-release API from the main process, i
 no cache), with the user agent `mJournal`. `core/updates.ts` compares the version numbers. Development builds don’t
 check automatically; end-to-end tests point `MJOURNAL_UPDATE_URL` at a local server (only honoured when the app isn’t
 packaged).
+
+*What’s new* (`WhatsNewDialog` in `renderer/components/UpdateNotice.tsx`, opened from the sidebar note’s headline and
+from Settings) shows what the newer version changes. Only when it is opened does `updates.changes` ask GitHub, through
+the same session, for its list of the newest releases (`RELEASES_API`, 30 of them). `changesBetween` in
+`core/updates.ts` keeps the releases after the running version up to the newer one, pre-releases in between included,
+drafts never, newest first; `complete` is false when the list may stop before the running version. The answer is kept
+while mJournal stays open (a failure isn’t, so opening it again asks again). The notes are GitHub’s Markdown, read by
+`core/releaseNotes.ts` into plain blocks (headings, paragraphs, lists, quotes, code, bold, italics) that
+`components/ReleaseNotes.tsx` renders as React elements: nothing becomes HTML, links are shown as their text and never
+opened, images are left out (they would be fetched), and what the release workflow adds for the Releases page (the
+VirusTotal section, *New Contributors*, the *Full Changelog* link) is hidden. Versions left with no notes aren’t shown.
 
 Nothing is downloaded until the person clicks *Update*. `main/services/updateInstaller.ts` (`UpdateInstaller`) then
 downloads, through the same session, the release’s `SHA256SUMS.txt` and the one file this copy needs, both from fixed
@@ -356,8 +368,9 @@ make Linux packages on Windows, hence the second runner. As soon as `windows` is
 `.exe` files with the VirusTotal API (key in the `VT_API_KEY` secret, kept out of the job that can write releases),
 waits for the scans and hands on Markdown links to `virustotal.com/gui/file/<sha256>`. Only if all three succeed does
 `publish` collect the files, write `SHA256SUMS.txt` and create the release `v<version>` at the built commit with
-`gh release create` (replacing an earlier draft of the same version); its notes are GitHub’s generated changelog
-(`releases/generate-notes`) followed by the VirusTotal links. There is deliberately no tag
+`gh release create` (replacing an earlier draft of the same version); its notes are the version’s section of
+`CHANGELOG.md` (from `## <version>` to the next `## ` heading; a warning when there is none), GitHub’s generated
+changelog (`releases/generate-notes`) and the VirusTotal links. The app shows them in *What’s new*. There is deliberately no tag
 trigger: publishing a draft creates its tag, which would otherwise start a second run. The update check reads GitHub’s
 “latest release”, which never includes drafts or pre-releases. electron-builder itself never publishes
 (`publish: null`), so no auto-update metadata is produced.
@@ -381,12 +394,13 @@ to the executable together with `LICENSE`; `tests/unit/notices.test.ts` fails wh
   (`#tag` edge cases, tag-only days, renaming rules); recently removed days and how they merge back; prompts asked
   every day; letters to the future (sealing with a fake clock); search phrases, exclusions and highlight ranges;
   searching reflections and letters; the year in review; the extra insights; moving and paging photos; the
-  desktop-file quoting for opening at sign-in; quick notes.
+  desktop-file quoting for opening at sign-in; quick notes; reading release notes for *What’s new* (which releases
+  count, the Markdown, what is hidden).
 - `tests/e2e` (Playwright driving the built app with a temporary `MJOURNAL_DATA_DIR`): clean start; writing, closing
   the window and reopening; editing earlier days; calendar navigation; photos with duplicate names and thumbnails;
   missing photo files; search and filters; monthly reflection persistence; JSON and CSV export; backup and confirmed
   restore; corrupted backup; theme switching; the welcome guide (with animations on, and in the smallest window);
-  one-time tips; the update note (against a local stand-in for GitHub); keyboard-only use; the PIN lock (set in
+  one-time tips; the update note and *What’s new* (against a local stand-in for GitHub); keyboard-only use; the PIN lock (set in
   Settings, the next start locked with journal requests and photos refused, wrong PIN, Ctrl+L saving first, locking
   after a minute without input with Playwright's fake clock, turning it off); since 1.2 also thumbnails coming back
   after a restore, text size, reordering and moving photos, automatic and password-protected backups, restoring a

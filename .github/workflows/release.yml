@@ -1,7 +1,8 @@
 # Builds mJournal for Windows and Linux, tests it on both and puts it on the GitHub Releases page.
 #
 # To release a version:
-#   1. Raise the version: npm version patch --no-git-tag-version (or minor / major), then commit and push.
+#   1. Raise the version: npm version patch --no-git-tag-version (or minor / major), write what changes under
+#      "## <version>" in CHANGELOG.md, then commit and push.
 #   2. On GitHub: Actions → Release → Run workflow, and pick what to make:
 #        draft        only you can see it; check it, then press "Publish release" on GitHub
 #        pre-release  public, but the app's update check ignores it (a release candidate)
@@ -256,6 +257,13 @@ jobs:
     env:
       VERSION: ${{ needs.check.outputs.version }}
     steps:
+      # Only CHANGELOG.md: this version's section of it starts the release notes.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
       - uses: actions/download-artifact@v8
         with:
           path: release
@@ -280,10 +288,32 @@ jobs:
           if [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = "true" ]; then
             gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
           fi
-          # GitHub's list of changes since the last release, with the VirusTotal links below it.
+          # This version's section of CHANGELOG.md (the app shows it in "What's new"), then GitHub's list of changes
+          # since the last release, then the VirusTotal links. The section runs from "## 1.2.3" (also "## [1.2.3]",
+          # "## v1.2.3", or with a date after it) to the next "## " heading.
           notes="$RUNNER_TEMP/notes.md"
+          : > "$notes"
+          if [ -f "$GITHUB_WORKSPACE/CHANGELOG.md" ]; then
+            awk -v version="$VERSION" '
+              /^## / {
+                if (found) exit
+                heading = $0
+                sub(/^## +\[?v?/, "", heading)
+                if (index(heading, version) == 1) {
+                  rest = substr(heading, length(version) + 1)
+                  if (rest == "" || rest ~ /^[] \t]/) found = 1
+                }
+                next
+              }
+              found { print }
+            ' "$GITHUB_WORKSPACE/CHANGELOG.md" > "$notes"
+          fi
+          if ! grep -q '[^[:space:]]' "$notes"; then
+            echo "::warning::CHANGELOG.md has nothing under \"## $VERSION\", so the release notes, and What's new in the app, don't say what changed. Write them on the release on GitHub (before publishing a draft), and in CHANGELOG.md next time."
+          fi
+          printf '\n' >> "$notes"
           gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-            -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" --jq .body > "$notes"
+            -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" --jq .body >> "$notes"
           printf '\n\n%s\n' "$VIRUSTOTAL" >> "$notes"
           case "$KIND" in
             draft) flag=--draft ;;

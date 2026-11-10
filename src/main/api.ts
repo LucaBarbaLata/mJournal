@@ -5,7 +5,7 @@
  */
 import { basename } from 'node:path';
 import type { DesktopStatus, ImportResult, MJournalApi, SearchQuery, Settings } from '@core/api';
-import type { UpdateStatus } from '@core/updates';
+import type { UpdateChanges, UpdateStatus } from '@core/updates';
 import { addDays, todayKey, type DateKey } from '@core/dates';
 import { isMoodColor, isMoodIcon, MAX_MOOD_LABEL_LENGTH, type MoodColor, type MoodIcon } from '@core/moods';
 import { MAX_GALLERY_LIMIT } from '@core/photos';
@@ -58,7 +58,13 @@ export interface Platform {
   /** The tray, opening at sign-in and the quick-note shortcut. */
   desktopStatus(): DesktopStatus;
   /** The update check (services/updates.ts). */
-  updates: { status(): UpdateStatus; check(): Promise<UpdateStatus>; install(): Promise<UpdateStatus>; dismissResult(): UpdateStatus };
+  updates: {
+    status(): UpdateStatus;
+    check(): Promise<UpdateStatus>;
+    install(): Promise<UpdateStatus>;
+    dismissResult(): UpdateStatus;
+    changes(): Promise<UpdateChanges>;
+  };
   openReleasePage(): Promise<void>;
 }
 
@@ -556,6 +562,7 @@ export function createApi(
       check: async () => platform.updates.check(),
       install: async () => platform.updates.install(),
       dismissResult: async () => platform.updates.dismissResult(),
+      changes: async () => platform.updates.changes(),
       openReleasePage: async () => platform.openReleasePage(),
     },
 

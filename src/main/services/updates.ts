@@ -6,15 +6,18 @@
  * downloads and installs the new version (updateInstaller.ts), and where this
  * copy can't do that, "Get it" links to GitHub. How the update went is kept in
  * the status (`result`) until the person has seen it: a failure right away, a
- * finished update after mJournal has opened again.
+ * finished update after mJournal has opened again. What the newer version
+ * changes is asked for only when the person opens "What's new" (changes()).
  */
 import { UserFacingError } from '@core/validation';
 import {
+  changesBetween,
   CHECK_INTERVAL_MS,
   isNewerVersion,
   parseVersion,
   releaseVersion,
   type InstallKind,
+  type UpdateChanges,
   type UpdateResult,
   type UpdateState,
   type UpdateStatus,
@@ -59,6 +62,8 @@ export interface UpdateCheckerOptions {
   currentVersion: string;
   /** GitHub's latest-release answer, or null when nothing has been released yet. Rejects when GitHub can't be reached. */
   fetchLatestRelease: () => Promise<unknown>;
+  /** GitHub's list of the newest releases (RELEASES_API), for "What's new". Rejects when GitHub can't be reached. */
+  fetchReleases?: () => Promise<unknown>;
   /** Whether automatic checks are on. */
   enabled: () => boolean;
   load: () => unknown;
@@ -75,6 +80,7 @@ export interface UpdateCheckerOptions {
 }
 
 const INSTALL_FAILED = 'The update couldn’t be installed. Try again, or get it from GitHub.';
+const CHANGES_FAILED = 'GitHub couldn’t be reached just now, so what’s new can’t be shown. Are you online?';
 
 interface Installation {
   version: string;
@@ -115,6 +121,8 @@ export class UpdateChecker {
   private result: UpdateResult | null = null;
   /** Whether GitHub has been asked since mJournal started: every start asks once, however recently it asked before. */
   private askedSinceStart = false;
+  /** What's new up to the newer version, asked for once while mJournal stays open (or being asked for). */
+  private changesAsked: { latest: string; answer: Promise<UpdateChanges> } | null = null;
 
   constructor(private readonly options: UpdateCheckerOptions) {
     const saved = options.load();
@@ -212,6 +220,38 @@ export class UpdateChecker {
       this.notify();
     }
     return this.status();
+  }
+
+  /**
+   * What the newer version changes ("What's new"): the notes of every release after this version, up to the newer
+   * one, newest first. Asks GitHub only the first time it's opened (and again after a failure). Nothing when no newer
+   * version is known. Rejects with a UserFacingError when GitHub can't be reached.
+   */
+  async changes(): Promise<UpdateChanges> {
+    const { latest } = this.status();
+    const { fetchReleases, currentVersion } = this.options;
+    if (!latest) return { releases: [], complete: true };
+    let asked = this.changesAsked;
+    if (asked?.latest !== latest) {
+      const answer = (async () => {
+        if (!fetchReleases) throw new Error('This copy can’t ask GitHub for release notes');
+        const changes = changesBetween(await fetchReleases(), currentVersion, latest);
+        if (!changes) throw new Error('GitHub answered with something that is not a list of releases');
+        return changes;
+      })();
+      asked = { latest, answer };
+      this.changesAsked = asked;
+      answer.catch((err: unknown) => {
+        // Not kept, so opening it again asks again.
+        if (this.changesAsked?.answer === answer) this.changesAsked = null;
+        this.options.onError?.(err);
+      });
+    }
+    try {
+      return await asked.answer;
+    } catch {
+      throw new UserFacingError('offline', CHANGES_FAILED);
+    }
   }
 
   /** Asks GitHub now. Resolves with the new status; never rejects. */

@@ -5,13 +5,18 @@
  * It reads which version was released last on GitHub and compares version
  * numbers. A new version is downloaded and installed only when the person
  * clicks "Update" (main/services/updateInstaller.ts); afterwards a window says
- * whether that worked.
+ * whether that worked. What changed is asked for only when the person opens
+ * "What's new" (changesBetween).
  */
 
 /** The GitHub repository mJournal is released from. */
 export const RELEASES_REPO = 'LucaBarbaLata/mJournal';
 /** GitHub's answer for the newest published release (drafts and pre-releases are never "latest"). */
 export const LATEST_RELEASE_API = `https://api.github.com/repos/${RELEASES_REPO}/releases/latest`;
+/** "What's new" reads the notes of this many of the newest releases, which GitHub lists in one answer. */
+export const RELEASES_PER_PAGE = 30;
+/** GitHub's list of the newest releases with their notes, newest first. */
+export const RELEASES_API = `https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=${RELEASES_PER_PAGE}`;
 /** Where a person downloads the new version. */
 export const RELEASES_PAGE = `https://github.com/${RELEASES_REPO}/releases/latest`;
 
@@ -91,6 +96,63 @@ export function releaseVersion(answer: unknown): string | null {
   const { tag_name: tag, draft, prerelease } = answer as Record<string, unknown>;
   if (typeof tag !== 'string' || draft === true || prerelease === true) return null;
   return parseVersion(tag)?.join('.') ?? null;
+}
+
+/** One release's notes, as written on GitHub (from CHANGELOG.md, by .github/workflows/release.yml). */
+export interface ReleaseNotes {
+  /** "1.2.3" */
+  version: string;
+  /** When it was published (ISO time), or null when GitHub didn't say. */
+  publishedAt: string | null;
+  /** The notes in GitHub's Markdown; empty when none were written. */
+  notes: string;
+}
+
+/** What changes with an update: the notes of every release after this version, up to the newer one. */
+export interface UpdateChanges {
+  /** Newest first. */
+  releases: ReleaseNotes[];
+  /** False when GitHub's list ends before this version, so older changes are only on GitHub. */
+  complete: boolean;
+}
+
+/** Notes longer than this are cut short (GitHub allows 125,000 characters). */
+export const MAX_NOTES_LENGTH = 20_000;
+
+function compareVersions(a: string, b: string): number {
+  if (isNewerVersion(a, b)) return -1;
+  return isNewerVersion(b, a) ? 1 : 0;
+}
+
+/**
+ * The releases in GitHub's release list (`answer`) that come after `current`, up to and including `latest`, newest
+ * first. Pre-releases in between count too: what they changed is in the newer release as well. Null when the answer
+ * isn't a list of releases.
+ */
+export function changesBetween(answer: unknown, current: string, latest: string): UpdateChanges | null {
+  if (!Array.isArray(answer)) return null;
+  const releases: ReleaseNotes[] = [];
+  // A full page may stop before this version; a shorter one is every release there is.
+  let complete = answer.length < RELEASES_PER_PAGE;
+  for (const item of answer) {
+    if (typeof item !== 'object' || item === null) continue;
+    const { tag_name: tag, draft, body, published_at: publishedAt } = item as Record<string, unknown>;
+    if (typeof tag !== 'string' || draft === true) continue;
+    const version = parseVersion(tag)?.join('.');
+    if (!version) continue;
+    if (!isNewerVersion(version, current)) {
+      complete = true;
+      continue;
+    }
+    if (isNewerVersion(version, latest) || releases.some((release) => release.version === version)) continue;
+    releases.push({
+      version,
+      publishedAt: typeof publishedAt === 'string' && !Number.isNaN(Date.parse(publishedAt)) ? publishedAt : null,
+      notes: typeof body === 'string' ? body.slice(0, MAX_NOTES_LENGTH) : '',
+    });
+  }
+  releases.sort((a, b) => compareVersions(a.version, b.version));
+  return { releases, complete };
 }
 
 /** The release file each kind installs: the names .github/workflows/release.yml publishes. */
